@@ -11,12 +11,12 @@ from st_slicer.pdg.pdg_builder import PDGBuilder, build_program_dependence_graph
 from st_slicer.criteria import mine_slicing_criteria, CriterionConfig
 from st_slicer.slicer import backward_slice
 from st_slicer.sema.builder import build_symbol_table
-
+from st_slicer.functional_blocks import extract_functional_blocks, FunctionalBlock
 
 
 def main():
     # 你可以在这里随时换测试文件，如 demo_array.st / demo_struct.st
-    code_path = Path(__file__).parent / "19.st"
+    code_path = Path(__file__).parent / "mc_moveabsolute.st"
     code = code_path.read_text(encoding="utf-8")
     code_lines = code.splitlines()
 
@@ -110,35 +110,37 @@ def main():
             print("\nNo slicing criteria found for this POU.")
             continue
 
-        # 4) 随便拿一个准则做切片（这里取第 0 个）
-        crit = criteria[5]
-        print(f"\n=== Run slicing for first criterion: node={crit.node_id}, kind={crit.kind}, var={crit.variable} ===")
-        slice_nodes = backward_slice(prog_pdg, [crit.node_id])
-        print("Slice nodes for first criterion:", sorted(slice_nodes))
+        print("\n=== Mined slicing criteria ===")
+        for c in criteria:
+            print(c)
 
-        # 5) 把 IR 指令切片映射回“语句级 + 源码级”
-        # (1) IR -> AST 语句去重
-        stmt_set = set()
-        for i in slice_nodes:
-            if 0 <= i < len(irb.ir2ast_stmt):
-                ast_stmt = irb.ir2ast_stmt[i]
-                if ast_stmt is not None:
-                    stmt_set.add(ast_stmt)
+        if not criteria:
+            print("\nNo slicing criteria found for this POU.")
+            continue
 
-        # (2) AST 语句 -> 源码行号
-        sliced_lines = set()
-        for st in stmt_set:
-            line_no = getattr(st.loc, "line", None)
-            if line_no is not None and 1 <= line_no <= len(code_lines):
-                sliced_lines.add(line_no)
+        # 8) 调用功能块划分：多准则切片 + 聚类
+        blocks = extract_functional_blocks(
+            prog_pdg=prog_pdg,
+            criteria=criteria,
+            ir2ast_stmt=irb.ir2ast_stmt,
+            code_lines=code_lines,
+            overlap_threshold=0.5,   # 可以后续调参
+        )
 
-        print("Sliced source lines:", sorted(sliced_lines))
-        print("\n=== Sliced ST code (by line) ===")
-        for ln in sorted(sliced_lines):
-            print(f"{ln:4d}: {code_lines[ln-1].rstrip()}")
+        print(f"\nTotal functional blocks: {len(blocks)}")
 
-        # 之后你可以进一步：基于 AST 构造一个新的 Program AST，只保留这些语句，再 pretty-print 为完整可编译的 ST 程序。
+        # 9) 打印每个功能块对应的源码行片段（先做“按行视图”）
+        for idx, block in enumerate(blocks):
+            print(f"\n\n===== Functional Block #{idx} =====")
+            print(f"Criteria in this block:")
+            for c in block.criteria:
+                print("   ", c)
+            print(f"Nodes in this block: {sorted(block.node_ids)}")
+            print(f"Sliced source lines: {block.line_numbers}")
 
+            print("\n--- ST code for this functional block ---")
+            for ln in block.line_numbers:
+                print(f"{ln:4d}: {code_lines[ln-1].rstrip()}")
 
 
 if __name__ == "__main__":
