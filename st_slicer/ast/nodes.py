@@ -1,0 +1,117 @@
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import List, Optional, Any, Tuple
+
+
+@dataclass(eq=False)
+class SourceLocation:
+    file: str
+    line: int
+    column: int = 0
+
+
+# ===== Expressions =====
+
+class Expr:
+    loc: SourceLocation
+
+
+@dataclass(eq=False)
+class VarRef(Expr):
+    name: str
+    loc: SourceLocation
+
+
+@dataclass(eq=False)
+class ArrayAccess(Expr):
+    base: Expr           # 通常是 VarRef 或 FieldAccess
+    index: Expr          # 下标表达式，可是常量/变量/算式
+    loc: SourceLocation
+
+
+@dataclass(eq=False)
+class FieldAccess(Expr):
+    base: Expr           # 通常是 VarRef 或 ArrayAccess
+    field: str           # 字段名，比如 "Pos" / "Status"
+    loc: SourceLocation
+
+
+@dataclass(eq=False)
+class Literal(Expr):
+    value: Any
+    type: str
+    loc: SourceLocation
+
+
+@dataclass(eq=False)
+class BinOp(Expr):
+    op: str
+    left: Expr
+    right: Expr
+    loc: SourceLocation
+
+
+# ===== Statements =====
+
+class Stmt:
+    loc: SourceLocation
+
+
+@dataclass(eq=False)
+class Assignment(Stmt):
+    target: Expr
+    value: Expr
+    loc: SourceLocation
+
+
+@dataclass(eq=False)
+class IfStmt(Stmt):
+    cond: Expr
+    then_body: List[Stmt]
+    elif_branches: List[Tuple[Expr, List[Stmt]]] = field(default_factory=list)
+    else_body: List[Stmt] = field(default_factory=list)
+    loc: SourceLocation = None
+
+
+@dataclass(eq=False)
+class ForStmt(Stmt):
+    var: str
+    start: Expr
+    end: Expr
+    step: Optional[Expr]
+    body: List[Stmt]
+    loc: SourceLocation
+
+
+@dataclass(eq=False)
+class CallStmt(Stmt):
+    fb_name: str
+    args: List[Expr]
+    loc: SourceLocation
+
+
+# ===== POU / Program units =====
+
+@dataclass(eq=False)
+class VarDecl:
+    name: str
+    type: str
+    storage: str  # VAR / VAR_INPUT / ...
+    init_expr: Optional[Expr]
+    loc: SourceLocation
+
+
+@dataclass(eq=False)
+class ProgramDecl:
+    name: str
+    vars: List[VarDecl]
+    body: List[Stmt]
+    loc: SourceLocation
+
+
+@dataclass(eq=False)
+class FBDecl:
+    name: str
+    vars: List[VarDecl]
+    body: List[Stmt]
+    loc: SourceLocation
