@@ -50,6 +50,13 @@ class BinOp(Expr):
     right: Expr
     loc: SourceLocation
 
+#新增：函数/FB 调用表达式
+@dataclass(eq=False)
+class CallExpr(Expr):
+    func: str              # 函数/FB 名字，例如 "Motion_Delta_S"
+    args: List[Expr]       # 实际参数表达式列表
+    loc: SourceLocation
+
 
 # ===== Statements =====
 

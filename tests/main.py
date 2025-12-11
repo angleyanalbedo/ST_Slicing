@@ -32,7 +32,12 @@ def main():
         # 1) IR
         irb = IRBuilder(pou_name=pou.name)
         for s in pou.body:
-            irb.lower_stmt(s)
+            irb.lower_stmt(s)           
+        print(f"\n=== IR for POU {pou.name} ===")
+        # for idx, ins in enumerate(irb.instrs):
+        #     # 如果 ins 是 dataclass，这样可以看到字段内容
+        #     print(idx, vars(ins))
+
 
         # 2) CFG
         cfg_builder = CFGBuilder(irb.instrs)
@@ -46,13 +51,13 @@ def main():
         pdg_builder = PDGBuilder(cfg, du_result)
         raw_pdg = pdg_builder.build()
 
-        # print("\n=== PDG Data Dependencies ===")
-        # for src, dsts in sorted(raw_pdg.data_deps.items()):
-        #     print(f"{src} --data--> {sorted(dsts)}")
+        print("\n=== PDG Data Dependencies ===")
+        for src, dsts in sorted(raw_pdg.data_deps.items()):
+            print(f"{src} --data--> {sorted(dsts)}")
 
-        # print("\n=== PDG Control Dependencies ===")
-        # for src, dsts in sorted(raw_pdg.control_deps.items()):
-        #     print(f"{src} --ctrl--> {sorted(dsts)}")
+        print("\n=== PDG Control Dependencies ===")
+        for src, dsts in sorted(raw_pdg.control_deps.items()):
+            print(f"{src} --ctrl--> {sorted(dsts)}")
 
         # 5) 构建“前驱风格”的 ProgramDependenceGraph（切片用）
         prog_pdg = build_program_dependence_graph(irb.instrs, raw_pdg)
@@ -66,9 +71,9 @@ def main():
         proj_symtab = build_symbol_table(pous)
         pou_symtab = proj_symtab.get_pou(pou.name)
 
-        # print("\n=== Symbols in POU symtab ===")
-        # for sym in pou_symtab.get_all_symbols():
-        #     print(sym.name, getattr(sym, "type", None), getattr(sym, "role", None))
+        print("\n=== Symbols in POU symtab ===")
+        for sym in pou_symtab.get_all_symbols():
+            print(sym.name, getattr(sym, "type", None), getattr(sym, "role", None))
 
         # 7) 准则挖掘
         config = CriterionConfig()
@@ -101,9 +106,9 @@ def main():
             print(f"Lines in this block: {len(block.line_numbers)} -> {sorted(block.line_numbers)[:10]} ...")
             print(f"Nodes in this block: {len(block.node_ids)}")
 
-            print("\n--- ST code for this functional block (original snippet) ---")
-            for ln in sorted(block.line_numbers):
-                print(f"{ln:4d}: {code_lines[ln-1].rstrip()}")
+            # print("\n--- ST code for this functional block (original snippet) ---")
+            # for ln in sorted(block.line_numbers):
+            #     print(f"{ln:4d}: {code_lines[ln-1].rstrip()}")
 
             # 生成完整 PROGRAM（带 VAR 区）
             completed = build_completed_block(

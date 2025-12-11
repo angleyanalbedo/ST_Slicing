@@ -14,6 +14,9 @@ from ..ast.nodes import (
     VarRef,
     Literal,
     BinOp,
+    ArrayAccess,
+    FieldAccess,
+    CallExpr, 
 )
 from .ir_nodes import (
     IRInstr,
@@ -107,7 +110,47 @@ class IRBuilder:
             )
             return t
 
+        if isinstance(expr, CallExpr):
+            # 1) 对每个实参做 lower_expr
+            arg_temps = [self.lower_expr(arg) for arg in expr.args]
+
+            # 2) 没有参数：用常量 0 占位
+            if not arg_temps:
+                t = self.new_temp()
+                self.emit(
+                    IRAssign(
+                        target=t,
+                        src="0",
+                        loc=self._loc(expr),
+                    ),
+                    ast_stmt=None,
+                )
+                return t
+
+            # 3) 只有一个参数，直接返回
+            if len(arg_temps) == 1:
+                return arg_temps[0]
+
+            # 4) 多个参数：arg0 + arg1 + arg2 + ...
+            result = arg_temps[0]
+            for arg_temp in arg_temps[1:]:
+                t = self.new_temp()
+                self.emit(
+                    IRBinOp(
+                        dest=t,
+                        op="+",
+                        left=result,
+                        right=arg_temp,
+                        loc=self._loc(expr),
+                    ),
+                    ast_stmt=None,
+                )
+                result = t
+
+            return result
+
         raise NotImplementedError(f"lower_expr not implemented for {type(expr)}")
+
 
     def _lower_lvalue(self, expr: Expr) -> str:
         if isinstance(expr, VarRef):

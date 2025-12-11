@@ -23,6 +23,7 @@ from .nodes import (
     BinOp,
     ArrayAccess,
     FieldAccess,
+    CallExpr,   #新增
     # 如果你在 nodes.py 里有 UnaryOp，可以自己改成用 UnaryOp
     # UnaryOp,
 )
@@ -547,10 +548,10 @@ class ASTBuilder(IEC61131ParserVisitor):
     ) -> Expr:
         """
         primary_expression
-          : constant
-          | v=variable
-          | invocation
-          ;
+        : constant
+        | v=variable
+        | invocation
+        ;
         """
         if ctx.constant():
             return self.visit(ctx.constant())
@@ -558,11 +559,31 @@ class ASTBuilder(IEC61131ParserVisitor):
             return self.visit(ctx.v)
         if ctx.invocation():
             inv = ctx.invocation()
+
+            # 取函数/FB 名字
             if hasattr(inv, "id_") and inv.id_ is not None:
-                name = inv.id_.getText()
+                func_name = inv.id_.getText()
             else:
-                name = inv.symbolic_variable().getText()
-            return VarRef(name=name, loc=self._loc(ctx))
+                func_name = inv.symbolic_variable().getText()
+
+            # 收集参数表达式（和 visitInvocation 里的逻辑类似，但这里返回 Expr）
+            args: List[Expr] = []
+
+            for pa in inv.param_assignment():
+                expr = self.visit(pa)
+                if isinstance(expr, Expr):
+                    args.append(expr)
+
+            for e in inv.expression():
+                expr = self.visit(e)
+                if isinstance(expr, Expr):
+                    args.append(expr)
+
+            return CallExpr(
+                func=func_name,
+                args=args,
+                loc=self._loc(inv),
+            )
 
         raise RuntimeError("Unexpected primary_expression")
 
