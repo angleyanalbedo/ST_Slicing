@@ -1,0 +1,2951 @@
+
+===== BLOCK 0 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_0
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Run_Number : USINT;
+    AxesGroup_State : USINT;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    circMode : USINT;
+    group_RunNumberF : USINT;
+    lastExe : BOOL;
+    stage : USINT;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 0 AND Execute AND NOT lastExe AND NOT Active THEN
+    IF AxesGroup < 0 OR AxesGroup > 20 THEN
+        ErrorID := 16#05;
+    END_IF;
+    AxesGroup_State := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 4(* AG_GS *));
+    IF AxesGroup_State = 0(* GS_GroupDisabled *) OR AxesGroup_State = 1(* GS_GroupErrorstop *) THEN
+        ErrorID := 16#01 (* ER_StateError *);
+    ELSIF AxesGroup_State = 4(* GS_GroupStopping *) THEN
+        ErrorID := 16#20(* ER_AxisState_Stopping_Error *);
+    END_IF;
+    IF Velocity < 0 OR Acceleration <= 0 OR Deceleration <= 0 OR Jerk < 0 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF CoordSystem <> 1(* CS_ACS *) AND CoordSystem <> 2(* CS_MCS *) AND CoordSystem <> 3(* CS_PCS *) THEN
+        ErrorID := 16#06(* ER_CoordSystem_ParameterError *);
+    END_IF;
+    IF BufferMode >= 6 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF TransitionMode >= 5 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF ErrorID <> 0(* ER_NoError *) THEN
+        Error := TRUE;
+    ELSE
+        AxesGroup_Axis_Sum_In_Group := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 5(* AG_ASUM *));
+        axesgroup := AxesGroup;
+        bufferMode := BufferMode;
+        transitionMode := TransitionMode;
+        circMode := CircMode;
+        AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+        group_RunNumberF := AxesGroup_Run_Number;
+        stage := 1(* FBS_WaitBuffer *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) OR stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number <> group_RunNumberF THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 1 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_1
+VAR
+    AxesGroup_Buffer_Busy : USINT;
+    AxesGroup_Buffered_Transition_Mode : USINT;
+    AxesGroup_Busy : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    group_RunNumberF : USINT;
+    stage : USINT;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 1(* FBS_WaitBuffer *) THEN
+    IF bufferMode = 0(* BM_Aborting *) THEN
+        AxesGroup_Buffered_Transition_Mode := transitionMode;
+        IF ErrorID = 0 THEN
+            group_RunNumberF := AxesGroup_Run_Number MOD 255 + 1; // [1,255]
+        END_IF;
+    ELSE
+        AxesGroup_Buffer_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 417(* AG_BBZ *));
+        IF AxesGroup_Buffer_Busy = 0 THEN
+            AxesGroup_Buffered_Transition_Mode := transitionMode;
+        END_IF;
+    END_IF;
+    IF ErrorID = 0(* ER_NoError *) THEN
+        stage := 2(* FBS_InBuffer *);
+    ELSE
+        Error := TRUE;
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 416(* AG_BZ *));
+    IF AxesGroup_Busy = 0 THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF transitionMode = 0 AND AxesGroup_Now_TCP_Velocity > 1 THEN
+            Error := TRUE;
+            stage := 0(* FBS_WaitExec *);
+        ELSE
+            stage := 3(* FBS_CalcRoute *);
+        END_IF;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 2 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_2
+VAR
+    AxesGroup_Buffer_Busy : USINT;
+    AxesGroup_Buffered_Transition_Mode : USINT;
+    AxesGroup_Buffered_Transition_Parameter : REAL;
+    AxesGroup_Interrupt : USINT;
+    axesgroup : USINT;
+    pp_done : BOOL;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 4(* FBS_Moving *) THEN
+    IF AxesGroup_Interrupt = 1 THEN
+        stage := 5(* FBS_CalcAbort *);
+    END_IF;
+    AxesGroup_Buffer_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 417(* AG_BBZ *));
+        AxesGroup_Buffered_Transition_Mode := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 421(* AG_BTM *));
+        AxesGroup_Buffered_Transition_Parameter := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 224(* AG_BTP *));
+    END_IF;
+    IF pp_done THEN
+        Error := FALSE;
+        Active := FALSE;
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 3 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_3
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Interrupt : USINT;
+    i : USINT;
+    pointnumber : USINT;
+    pp_blend_done : BOOL;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 5(* FBS_CalcAbort *) THEN
+    IF pointnumber = 0 THEN
+        Error := TRUE;
+    END_IF;
+    FOR i := 1 TO pointnumber DO
+        IF pointbuf_dtime[i] <= 0.00001 THEN
+            Error := TRUE;
+        END_IF;
+        IF Error THEN
+            FOR i := 1 TO pointnumber DO
+        END_IF;
+    IF NOT Error THEN
+        IF AxesGroup_Interrupt = 1 THEN
+            stage := 8(* FBS_Inerrupt *);
+        ELSE
+            stage := 7(* FBS_RunBlend *);
+        END_IF;
+    ELSE
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+pp_blend_done := AxesGroup_Axis_Sum_In_Group <> 0;
+FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+    pp_blend_done := pp_blend_done AND pp_blend_don[i];
+END_PROGRAM
+
+===== BLOCK 4 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_4
+VAR
+    AxesGroup_Buffered_Transition_Mode : USINT;
+    AxesGroup_Buffered_Transition_Parameter : REAL;
+    AxesGroup_Interrupt : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    axesgroup : USINT;
+    blendVel : REAL;
+    d : REAL;
+    i : USINT;
+    now_motion_done : BOOL;
+    pp_blend_done : BOOL;
+    pp_done : BOOL;
+    radius : REAL;
+    s_to_end : REAL;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 7(* FBS_RunBlend *) THEN
+    IF AxesGroup_Buffered_Transition_Mode = 0 THEN
+        IF pp_blend_done THEN
+            now_motion_done := TRUE;
+        END_IF;
+    ELSIF AxesGroup_Buffered_Transition_Mode = 1(* TM_StartV *) THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF AxesGroup_Now_TCP_Velocity <> 0 AND AxesGroup_Now_TCP_Velocity * 1000 <= AxesGroup_Buffered_Transition_Parameter * blendVel THEN
+            now_motion_done := TRUE;
+        END_IF;
+    ELSIF AxesGroup_Buffered_Transition_Mode = 2(* TM_ConstantV *) THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF AxesGroup_Now_TCP_Velocity * 1000 <= AxesGroup_Buffered_Transition_Parameter * blendVel THEN
+            now_motion_done := TRUE;
+        END_IF;
+    ELSIF AxesGroup_Buffered_Transition_Mode = 3(* TM_CornerDis *) THEN
+        d := ESQR((AxesGroup_Now_TCP_Position[1] - endpoint_tcp[1]) * (AxesGroup_Now_TCP_Position[1] - endpoint_tcp[1]) +
+        s_to_end := 2.0 * radius * EASIN(d / radius / 2) + path_s[i - 1];
+        IF s_to_end <= AxesGroup_Buffered_Transition_Parameter THEN
+            now_motion_done := TRUE;
+        END_IF;
+    ELSIF AxesGroup_Buffered_Transition_Mode = 4(* TM_MaxCornerDeviation *) THEN
+        d := ESQR((AxesGroup_Now_TCP_Position[1] - endpoint_tcp[1]) * (AxesGroup_Now_TCP_Position[1] - endpoint_tcp[1]) +
+        s_to_end := 2.0 * radius * EASIN(d / radius / 2) + path_s[i - 1];
+        IF s_to_end <= AxesGroup_Buffered_Transition_Parameter THEN
+            now_motion_done := TRUE;
+        END_IF;
+    END_IF;
+    IF now_motion_done THEN
+        Active := FALSE;
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 8(* FBS_Inerrupt *) THEN
+    AxesGroup_Interrupt := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 422(* AG_TINR *));
+    IF pp_blend_done THEN
+        Active := FALSE;
+    ELSIF AxesGroup_Interrupt = 0 AND NOT Active THEN
+        stage := 3(* FBS_CalcRoute *);
+    END_IF;
+END_IF;
+IF Error AND Active THEN
+    IF pp_done OR pp_blend_done THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 5 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_5
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Busy : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    AxesGroup_State : USINT;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    group_RunNumberF : USINT;
+    lastExe : BOOL;
+    stage : USINT;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 0 AND Execute AND NOT lastExe AND NOT Active THEN
+    IF AxesGroup < 0 OR AxesGroup > 20 THEN
+        ErrorID := 16#05;
+    END_IF;
+    AxesGroup_State := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 4(* AG_GS *));
+    IF AxesGroup_State = 0(* GS_GroupDisabled *) OR AxesGroup_State = 1(* GS_GroupErrorstop *) THEN
+        ErrorID := 16#01 (* ER_StateError *);
+    ELSIF AxesGroup_State = 4(* GS_GroupStopping *) THEN
+        ErrorID := 16#20(* ER_AxisState_Stopping_Error *);
+    END_IF;
+    IF Velocity < 0 OR Acceleration <= 0 OR Deceleration <= 0 OR Jerk < 0 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF CoordSystem <> 1(* CS_ACS *) AND CoordSystem <> 2(* CS_MCS *) AND CoordSystem <> 3(* CS_PCS *) THEN
+        ErrorID := 16#06(* ER_CoordSystem_ParameterError *);
+    END_IF;
+    IF BufferMode >= 6 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF TransitionMode >= 5 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF ErrorID <> 0(* ER_NoError *) THEN
+        Error := TRUE;
+    ELSE
+        AxesGroup_Axis_Sum_In_Group := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 5(* AG_ASUM *));
+        axesgroup := AxesGroup;
+        bufferMode := BufferMode;
+        transitionMode := TransitionMode;
+        AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+        group_RunNumberF := AxesGroup_Run_Number;
+        stage := 1(* FBS_WaitBuffer *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) OR stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number <> group_RunNumberF THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) THEN
+    IF bufferMode = 0(* BM_Aborting *) THEN
+        IF ErrorID = 0 THEN
+            group_RunNumberF := AxesGroup_Run_Number MOD 255 + 1; // [1,255]
+        END_IF;
+    END_IF;
+    IF ErrorID = 0(* ER_NoError *) THEN
+        stage := 2(* FBS_InBuffer *);
+    ELSE
+        Error := TRUE;
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 416(* AG_BZ *));
+    IF AxesGroup_Busy = 0 THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF transitionMode = 0 AND AxesGroup_Now_TCP_Velocity > 1 THEN
+            Error := TRUE;
+            stage := 0(* FBS_WaitExec *);
+        ELSE
+            stage := 3(* FBS_CalcRoute *);
+        END_IF;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 6 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_6
+VAR
+    AxesGroup_Interrupt : USINT;
+    i : USINT;
+    pointnumber : USINT;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 5(* FBS_CalcAbort *) THEN
+    IF pointnumber = 0 THEN
+        Error := TRUE;
+    END_IF;
+    FOR i := 1 TO pointnumber DO
+        IF pointbuf_dtime[i] <= 0.00001 THEN
+            Error := TRUE;
+        END_IF;
+        IF Error THEN
+            FOR i := 1 TO pointnumber DO
+        END_IF;
+    IF NOT Error THEN
+        IF AxesGroup_Interrupt = 1 THEN
+            stage := 8(* FBS_Inerrupt *);
+        ELSE
+            stage := 7(* FBS_RunBlend *);
+        END_IF;
+    ELSE
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 7 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_7
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Run_Number : USINT;
+    AxesGroup_State : USINT;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    group_RunNumberF : USINT;
+    lastExe : BOOL;
+    stage : USINT;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 0 AND Execute AND NOT lastExe AND NOT Active THEN
+    IF AxesGroup < 0 OR AxesGroup > 20 THEN
+        ErrorID := 16#05;
+    END_IF;
+    AxesGroup_State := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 4(* AG_GS *));
+    IF AxesGroup_State = 0(* GS_GroupDisabled *) OR AxesGroup_State = 1(* GS_GroupErrorstop *) THEN
+        ErrorID := 16#01 (* ER_StateError *);
+    ELSIF AxesGroup_State = 4(* GS_GroupStopping *) THEN
+        ErrorID := 16#20(* ER_AxisState_Stopping_Error *);
+    END_IF;
+    IF Velocity < 0 OR Acceleration <= 0 OR Deceleration <= 0 OR Jerk < 0 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF CoordSystem <> 1(* CS_ACS *) AND CoordSystem <> 2(* CS_MCS *) AND CoordSystem <> 3(* CS_PCS *) THEN
+        ErrorID := 16#06(* ER_CoordSystem_ParameterError *);
+    END_IF;
+    IF BufferMode >= 6 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF TransitionMode >= 5 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF ErrorID <> 0(* ER_NoError *) THEN
+        Error := TRUE;
+    ELSE
+        AxesGroup_Axis_Sum_In_Group := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 5(* AG_ASUM *));
+        axesgroup := AxesGroup;
+        bufferMode := BufferMode;
+        transitionMode := TransitionMode;
+        AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+        group_RunNumberF := AxesGroup_Run_Number;
+        stage := 1(* FBS_WaitBuffer *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) OR stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number <> group_RunNumberF THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 8 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_8
+VAR
+    AxesGroup_Buffer_Busy : USINT;
+    AxesGroup_Buffered_Transition_Mode : USINT;
+    AxesGroup_Buffered_Transition_Parameter : REAL;
+    AxesGroup_Interrupt : USINT;
+    axesgroup : USINT;
+    pp_done : BOOL;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 4(* FBS_Moving *) THEN
+    IF AxesGroup_Interrupt = 1 THEN
+        stage := 5(* FBS_CalcAbort *);
+    END_IF;
+    AxesGroup_Buffer_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 417(* AG_BBZ *));
+        AxesGroup_Buffered_Transition_Mode := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 421(* AG_BTM *));
+        AxesGroup_Buffered_Transition_Parameter := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 224(* AG_BTP *));
+    END_IF;
+    IF pp_done THEN
+        Error := FALSE;
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 9 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_9
+VAR
+    AxesGroup_Buffered_Transition_Mode : USINT;
+    AxesGroup_Buffered_Transition_Parameter : REAL;
+    AxesGroup_Interrupt : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    axesgroup : USINT;
+    blendVel : REAL;
+    d : REAL;
+    i : USINT;
+    now_motion_done : BOOL;
+    pp_blend_done : BOOL;
+    radius : REAL;
+    s_to_end : REAL;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 7(* FBS_RunBlend *) THEN
+    IF AxesGroup_Buffered_Transition_Mode = 0 THEN
+        IF pp_blend_done THEN
+            now_motion_done := TRUE;
+        END_IF;
+    ELSIF AxesGroup_Buffered_Transition_Mode = 1(* TM_StartV *) THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF AxesGroup_Now_TCP_Velocity <> 0 AND AxesGroup_Now_TCP_Velocity * 1000 <= AxesGroup_Buffered_Transition_Parameter * blendVel THEN
+            now_motion_done := TRUE;
+        END_IF;
+    ELSIF AxesGroup_Buffered_Transition_Mode = 2(* TM_ConstantV *) THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF AxesGroup_Now_TCP_Velocity * 1000 <= AxesGroup_Buffered_Transition_Parameter * blendVel THEN
+            now_motion_done := TRUE;
+        END_IF;
+    ELSIF AxesGroup_Buffered_Transition_Mode = 3(* TM_CornerDis *) THEN
+        d := ESQR((AxesGroup_Now_TCP_Position[1] - endpoint_tcp[1]) * (AxesGroup_Now_TCP_Position[1] - endpoint_tcp[1]) +
+        s_to_end := 2.0 * radius * EASIN(d / radius / 2) + path_s[i - 1];
+        IF s_to_end <= AxesGroup_Buffered_Transition_Parameter THEN
+            now_motion_done := TRUE;
+        END_IF;
+    ELSIF AxesGroup_Buffered_Transition_Mode = 4(* TM_MaxCornerDeviation *) THEN
+        d := ESQR((AxesGroup_Now_TCP_Position[1] - endpoint_tcp[1]) * (AxesGroup_Now_TCP_Position[1] - endpoint_tcp[1]) +
+        s_to_end := 2.0 * radius * EASIN(d / radius / 2) + path_s[i - 1];
+        IF s_to_end <= AxesGroup_Buffered_Transition_Parameter THEN
+            now_motion_done := TRUE;
+        END_IF;
+    END_IF;
+    IF now_motion_done THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 8(* FBS_Inerrupt *) THEN
+    AxesGroup_Interrupt := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 422(* AG_TINR *));
+END_IF;
+END_PROGRAM
+
+===== BLOCK 10 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_10
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Busy : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    AxesGroup_State : USINT;
+    acc : REAL;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    circMode : USINT;
+    coordSystem : USINT;
+    dec : REAL;
+    group_RunNumberF : USINT;
+    i : USINT;
+    jerk : REAL;
+    lastExe : BOOL;
+    stage : USINT;
+    transitionMode : USINT;
+    vel : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 0 AND Execute AND NOT lastExe AND NOT Active THEN
+    IF AxesGroup < 0 OR AxesGroup > 20 THEN
+        ErrorID := 16#05;
+    END_IF;
+    AxesGroup_State := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 4(* AG_GS *));
+    IF AxesGroup_State = 0(* GS_GroupDisabled *) OR AxesGroup_State = 1(* GS_GroupErrorstop *) THEN
+        ErrorID := 16#01 (* ER_StateError *);
+    ELSIF AxesGroup_State = 4(* GS_GroupStopping *) THEN
+        ErrorID := 16#20(* ER_AxisState_Stopping_Error *);
+    END_IF;
+    IF Velocity < 0 OR Acceleration <= 0 OR Deceleration <= 0 OR Jerk < 0 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF CoordSystem <> 1(* CS_ACS *) AND CoordSystem <> 2(* CS_MCS *) AND CoordSystem <> 3(* CS_PCS *) THEN
+        ErrorID := 16#06(* ER_CoordSystem_ParameterError *);
+    END_IF;
+    IF BufferMode >= 6 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF TransitionMode >= 5 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF ErrorID <> 0(* ER_NoError *) THEN
+    ELSE
+        AxesGroup_Axis_Sum_In_Group := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 5(* AG_ASUM *));
+        axesgroup := AxesGroup;
+        vel := Velocity;
+        acc := Acceleration;
+        dec := Deceleration;
+        jerk := Jerk;
+        bufferMode := BufferMode;
+        transitionMode := TransitionMode;
+        circMode := CircMode;
+        coordSystem := CoordSystem;
+        FOR i := 1 TO 6 DO
+            endpoint[i] := EndPoint[i];
+            auxpoint[i] := AuxPoint[i];
+        AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+        group_RunNumberF := AxesGroup_Run_Number;
+        stage := 1(* FBS_WaitBuffer *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) OR stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number <> group_RunNumberF THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) THEN
+    IF ErrorID = 0(* ER_NoError *) THEN
+        stage := 2(* FBS_InBuffer *);
+    ELSE
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 416(* AG_BZ *));
+    IF AxesGroup_Busy = 0 THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF transitionMode = 0 AND AxesGroup_Now_TCP_Velocity > 1 THEN
+            stage := 0(* FBS_WaitExec *);
+        ELSE
+            stage := 3(* FBS_CalcRoute *);
+        END_IF;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 11 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_11
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    BufCal_acc : REAL;
+    BufCal_dec : REAL;
+    BufCal_jerk : REAL;
+    BufCal_vel : REAL;
+    acc : REAL;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    circMode : USINT;
+    coordSystem : USINT;
+    curve_time : REAL;
+    dec : REAL;
+    i : USINT;
+    jerk : REAL;
+    path_point_num : USINT;
+    pp_blend_active : BOOL;
+    pp_blend_busy : BOOL;
+    pp_blend_done : BOOL;
+    stage : USINT;
+    tendpoint_index : USINT;
+    transitionMode : USINT;
+    vel : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 3(* FBS_CalcRoute *) THEN
+    IF bufferMode = 0 (* BM_Aborting *) THEN
+        FOR i := 1 TO 6 DO
+            nowpoint_tcp[i] := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 316(* AG_NTP *) + 4 * (i - 1));
+            strpoint_tcp[i] := nowpoint_tcp[i];
+    ELSE
+        FOR i := 1 TO 6 DO
+            nowpoint_tcp[i] := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 316(* AG_NTP *) + 4 * (i - 1));
+            strpoint_tcp[i] := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 668(* AG_MAP *) + 4 * (i - 1));
+    END_IF;
+    IF coordSystem = 1(* CS_ACS *) THEN
+    ELSIF  coordSystem = 2(* CS_MCS *) THEN
+        FOR i := 1 TO 6 DO
+            endpoint_tcp[i] := endpoint[i] + strpoint_tcp[i];
+            auxpoint_tcp[i] := auxpoint[i] + strpoint_tcp[i];
+    END_IF;
+    IF circMode = 1(* CM_Border *) THEN
+        auxpoint_tcp[1] := center_point[1];
+        auxpoint_tcp[2] := center_point[2];
+        auxpoint_tcp[3] := center_point[3];
+    END_IF;
+    pointbuf_dtime[1] := 0;    // 将pointbuf清空
+    AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+    IF transitionMode <> 0 AND AxesGroup_Now_TCP_Velocity <> 0 THEN
+                ELSE
+        FOR i := 1 TO 6 DO
+            tendpoint_tcp[i] := circle_path[6 * (tendpoint_index - 1) + i];
+            tendpoint_dir[i] := (circle_path[6 * (tendpoint_index - 1) + i] - circle_path[6 * (tendpoint_index - 2) + i]) / (path_s[tendpoint_index] - path_s[tendpoint_index - 1]);
+        pointbuf_dtime[20 + 1] := curve_time; pointbuf_dtime[20 + 2] := 0;
+    END_IF;
+    BufCal_vel := vel;
+    BufCal_acc := acc;
+    BufCal_dec := dec;
+    BufCal_jerk := jerk;
+    path_point_num := 100;
+END_IF;
+pp_blend_done := AxesGroup_Axis_Sum_In_Group <> 0;
+FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+    pp_blend_done := pp_blend_done AND pp_blend_don[i];
+pp_blend_busy := AxesGroup_Axis_Sum_In_Group <> 0;
+FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+    pp_blend_busy := pp_blend_busy AND pp_blend_bus[i];
+pp_blend_active := AxesGroup_Axis_Sum_In_Group <> 0;
+FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+    pp_blend_active := pp_blend_active AND pp_blend_act[i];
+END_PROGRAM
+
+===== BLOCK 12 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_12
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Busy : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    AxesGroup_State : USINT;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    coordSystem : USINT;
+    group_RunNumberF : USINT;
+    i : USINT;
+    lastExe : BOOL;
+    stage : USINT;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 0 AND Execute AND NOT lastExe AND NOT Active THEN
+    IF AxesGroup < 0 OR AxesGroup > 20 THEN
+        ErrorID := 16#05;
+    END_IF;
+    AxesGroup_State := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 4(* AG_GS *));
+    IF AxesGroup_State = 0(* GS_GroupDisabled *) OR AxesGroup_State = 1(* GS_GroupErrorstop *) THEN
+        ErrorID := 16#01 (* ER_StateError *);
+    ELSIF AxesGroup_State = 4(* GS_GroupStopping *) THEN
+        ErrorID := 16#20(* ER_AxisState_Stopping_Error *);
+    END_IF;
+    IF Velocity < 0 OR Acceleration <= 0 OR Deceleration <= 0 OR Jerk < 0 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF CoordSystem <> 1(* CS_ACS *) AND CoordSystem <> 2(* CS_MCS *) AND CoordSystem <> 3(* CS_PCS *) THEN
+        ErrorID := 16#06(* ER_CoordSystem_ParameterError *);
+    END_IF;
+    IF BufferMode >= 6 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF TransitionMode >= 5 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF ErrorID <> 0(* ER_NoError *) THEN
+    ELSE
+        AxesGroup_Axis_Sum_In_Group := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 5(* AG_ASUM *));
+        FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+            AxesGroup_JointDirections[i] := USINT_TO_SINT(MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 88(* AG_JD *) + (i - 1)));
+            AxesGroup_JointOffsets[i] := MC_RdAxesPar_D(AxesNum := AxesGroup,AddrOffset := 96(* AG_JO *) + (i - 1) * 4);
+            AxesGroup_JointGearRatios[i] := MC_RdAxesPar_FL(AxesNum := AxesGroup,AddrOffset := 192(* AG_JGR *) + (i - 1) * 4);
+            AxesGroup_Axis_Num_In_Group[i - 1] := USINT_TO_SINT(MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 6(* AG_ANUM *) + i - 1));
+        axesgroup := AxesGroup;
+        bufferMode := BufferMode;
+        transitionMode := TransitionMode;
+        coordSystem := CoordSystem;
+        FOR i := 1 TO 6 DO
+            endpoint[i] := EndPoint[i];
+            auxpoint[i] := AuxPoint[i];
+        AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+        group_RunNumberF := AxesGroup_Run_Number;
+        stage := 1(* FBS_WaitBuffer *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) OR stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number <> group_RunNumberF THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) THEN
+    IF ErrorID = 0(* ER_NoError *) THEN
+        stage := 2(* FBS_InBuffer *);
+    ELSE
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 416(* AG_BZ *));
+    IF AxesGroup_Busy = 0 THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF transitionMode = 0 AND AxesGroup_Now_TCP_Velocity > 1 THEN
+            stage := 0(* FBS_WaitExec *);
+        ELSE
+            stage := 3(* FBS_CalcRoute *);
+        END_IF;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 13 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_13
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    coordSystem : USINT;
+    i : USINT;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 3(* FBS_CalcRoute *) THEN
+    IF bufferMode = 0 (* BM_Aborting *) THEN
+        FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+            Axis_now_pulse[i] := MC_RdAxisPar_FL(AxisNum := SINT_TO_USINT(AxesGroup_Axis_Num_In_Group[i - 1]),AddrOffset := 76);
+            Axis_now_angel[i] := (Axis_now_pulse[i] - AxesGroup_JointOffsets[i]) * AxesGroup_JointDirections[i] / AxesGroup_JointGearRatios[i];
+            Axis_last_angel[i] := Axis_now_angel[i];
+    ELSE
+        FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+            AxesGroup_Now_Axis_Motion_AimPulse[i] := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 284(* AG_NMA *) + (i - 1) * 4);
+            Axis_last_angel[i] := (AxesGroup_Now_Axis_Motion_AimPulse[i] - AxesGroup_JointOffsets[i]) * AxesGroup_JointDirections[i] / AxesGroup_JointGearRatios[i];
+    END_IF;
+    IF coordSystem = 1(* CS_ACS *) THEN
+        FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+            endpoint_tcp[i] := endpoint[i] + Axis_now_angel[i];
+            auxpoint_tcp[i] := auxpoint[i] + Axis_now_angel[i];
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 14 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_14
+VAR
+    AxesGroup_Busy : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    AxesGroup_State : USINT;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    group_RunNumberF : USINT;
+    lastExe : BOOL;
+    stage : USINT;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 0 AND Execute AND NOT lastExe AND NOT Active THEN
+    IF AxesGroup < 0 OR AxesGroup > 20 THEN
+        ErrorID := 16#05;
+    END_IF;
+    AxesGroup_State := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 4(* AG_GS *));
+    IF AxesGroup_State = 0(* GS_GroupDisabled *) OR AxesGroup_State = 1(* GS_GroupErrorstop *) THEN
+        ErrorID := 16#01 (* ER_StateError *);
+    ELSIF AxesGroup_State = 4(* GS_GroupStopping *) THEN
+        ErrorID := 16#20(* ER_AxisState_Stopping_Error *);
+    END_IF;
+    IF Velocity < 0 OR Acceleration <= 0 OR Deceleration <= 0 OR Jerk < 0 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF CoordSystem <> 1(* CS_ACS *) AND CoordSystem <> 2(* CS_MCS *) AND CoordSystem <> 3(* CS_PCS *) THEN
+        ErrorID := 16#06(* ER_CoordSystem_ParameterError *);
+    END_IF;
+    IF BufferMode >= 6 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF TransitionMode >= 5 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF ErrorID <> 0(* ER_NoError *) THEN
+    ELSE
+        axesgroup := AxesGroup;
+        bufferMode := BufferMode;
+        transitionMode := TransitionMode;
+        AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+        group_RunNumberF := AxesGroup_Run_Number;
+        stage := 1(* FBS_WaitBuffer *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) OR stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number <> group_RunNumberF THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) THEN
+    IF ErrorID = 0(* ER_NoError *) THEN
+        stage := 2(* FBS_InBuffer *);
+    ELSE
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 416(* AG_BZ *));
+    IF AxesGroup_Busy = 0 THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF transitionMode = 0 AND AxesGroup_Now_TCP_Velocity > 1 THEN
+            stage := 0(* FBS_WaitExec *);
+        ELSE
+            stage := 3(* FBS_CalcRoute *);
+        END_IF;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 15 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_15
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Busy : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    AxesGroup_State : USINT;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    dec : REAL;
+    group_RunNumberF : USINT;
+    jerk : REAL;
+    lastExe : BOOL;
+    stage : USINT;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 0 AND Execute AND NOT lastExe AND NOT Active THEN
+    IF AxesGroup < 0 OR AxesGroup > 20 THEN
+        ErrorID := 16#05;
+    END_IF;
+    AxesGroup_State := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 4(* AG_GS *));
+    IF AxesGroup_State = 0(* GS_GroupDisabled *) OR AxesGroup_State = 1(* GS_GroupErrorstop *) THEN
+        ErrorID := 16#01 (* ER_StateError *);
+    ELSIF AxesGroup_State = 4(* GS_GroupStopping *) THEN
+        ErrorID := 16#20(* ER_AxisState_Stopping_Error *);
+    END_IF;
+    IF Velocity < 0 OR Acceleration <= 0 OR Deceleration <= 0 OR Jerk < 0 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF CoordSystem <> 1(* CS_ACS *) AND CoordSystem <> 2(* CS_MCS *) AND CoordSystem <> 3(* CS_PCS *) THEN
+        ErrorID := 16#06(* ER_CoordSystem_ParameterError *);
+    END_IF;
+    IF BufferMode >= 6 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF TransitionMode >= 5 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF ErrorID <> 0(* ER_NoError *) THEN
+        Error := TRUE;
+    ELSE
+        AxesGroup_Axis_Sum_In_Group := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 5(* AG_ASUM *));
+        axesgroup := AxesGroup;
+        dec := Deceleration;
+        jerk := Jerk;
+        bufferMode := BufferMode;
+        transitionMode := TransitionMode;
+        AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+        group_RunNumberF := AxesGroup_Run_Number;
+        stage := 1(* FBS_WaitBuffer *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) OR stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number <> group_RunNumberF THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) THEN
+    IF bufferMode = 0(* BM_Aborting *) THEN
+        IF ErrorID = 0 THEN
+            group_RunNumberF := AxesGroup_Run_Number MOD 255 + 1; // [1,255]
+        END_IF;
+    END_IF;
+    IF ErrorID = 0(* ER_NoError *) THEN
+        stage := 2(* FBS_InBuffer *);
+    ELSE
+        Error := TRUE;
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 416(* AG_BZ *));
+    IF AxesGroup_Busy = 0 THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF transitionMode = 0 AND AxesGroup_Now_TCP_Velocity > 1 THEN
+            Error := TRUE;
+            stage := 0(* FBS_WaitExec *);
+        ELSE
+            stage := 3(* FBS_CalcRoute *);
+        END_IF;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 16 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_16
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Interrupt : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    axesgroup : USINT;
+    d : REAL;
+    group_RunNumberF : USINT;
+    i : USINT;
+    pointnumber : USINT;
+    pp_done : BOOL;
+    radius : REAL;
+    stage : USINT;
+    tendpoint_index : USINT;
+    trans_s : REAL;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 3(* FBS_CalcRoute *) THEN
+    radius := ESQR((circle_path[1] - center_point[1]) * (circle_path[1] - center_point[1]) +
+    FOR i := 2 TO 100 DO
+        d := ESQR((circle_path[6 * (i - 1) + 1] - circle_path[6 * (i - 2) + 1]) * (circle_path[6 * (i - 1) + 1] - circle_path[6 * (i - 2) + 1]) +
+        path_s[i] := 2.0 * radius * EASIN(d / radius / 2) + path_s[i - 1];
+    AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+    IF transitionMode <> 0 AND AxesGroup_Now_TCP_Velocity <> 0 THEN
+                ELSE
+        FOR i := 1 TO 100 DO
+            IF path_s[i] >= trans_s THEN
+                tendpoint_index := i;
+            END_IF;
+    END_IF;
+    IF pointnumber = 0 THEN
+        Error := TRUE;
+    ELSE
+        FOR i := 1 TO pointnumber DO
+            IF pointbuf_dtime[i] <= 0.0001 THEN
+                Error := TRUE;
+            END_IF;
+    END_IF;
+    IF NOT Error THEN
+        stage := 4(* FBS_Moving *);
+    ELSE
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+pp_done := AxesGroup_Axis_Sum_In_Group <> 0;
+FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+    pp_done := pp_done AND pp_don[i];
+IF stage = 4(* FBS_Moving *) THEN
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number <> group_RunNumberF AND group_RunNumberF <> 0 THEN
+        stage := 5(* FBS_CalcAbort *);
+    END_IF;
+    AxesGroup_Interrupt := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 422(* AG_TINR *));
+    IF AxesGroup_Interrupt = 1 THEN
+        stage := 5(* FBS_CalcAbort *);
+    END_IF;
+    IF pp_done THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 17 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_17
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Interrupt : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    BufCal_dec : REAL;
+    BufCal_jerk : REAL;
+    BufCal_vs : REAL;
+    axesgroup : USINT;
+    d : REAL;
+    dec : REAL;
+    i : USINT;
+    j : USINT;
+    jerk : REAL;
+    now_s : REAL;
+    path_point_end : USINT;
+    path_point_num : USINT;
+    path_point_start : USINT;
+    pointnumber : USINT;
+    radius : REAL;
+    stage : USINT;
+    stop_s : REAL;
+    stop_time : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 5(* FBS_CalcAbort *) THEN
+    AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+    BufCal_vs := AxesGroup_Now_TCP_Velocity * 1000;
+    d := ESQR((nowpoint_tcp[1] - circle_path[1]) * (nowpoint_tcp[1] - circle_path[1]) +
+    now_s := 2.0 * radius * EASIN(d / radius / 2);
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number = 0 OR AxesGroup_Interrupt = 1 THEN
+        BufCal_dec := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 228(* AG_ID *));
+        BufCal_jerk := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 232(* AG_IJ *));
+    ELSE
+        BufCal_dec := dec;
+        BufCal_jerk := jerk;
+    END_IF;
+    IF BufCal_jerk > 0 THEN    // S型
+    ELSE                       // 梯形
+        stop_time := BufCal_vs / BufCal_dec;
+        stop_s := BufCal_vs * stop_time - BufCal_dec * stop_time * stop_time / 2.0;
+    END_IF;
+    FOR i := 99 TO 2 BY -1 DO
+        IF path_s[i] >= now_s THEN
+            path_point_start := i;
+        END_IF;
+    now_s := path_s[path_point_start];
+    FOR i := 99 TO 2 BY -1 DO
+        IF path_s[i] >= now_s + stop_s THEN
+            path_point_end := i;
+        END_IF;
+    path_point_num := path_point_end - path_point_start + 1;
+    FOR i := 0 TO pointnumber - 1 DO
+        FOR j := 1 TO AxesGroup_Axis_Sum_In_Group DO
+            Axis_last_angel[j] := pointbuf_acp[8 * i + j];
+END_IF;
+END_PROGRAM
+
+===== BLOCK 18 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_18
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Busy : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    AxesGroup_State : USINT;
+    acc : REAL;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    dec : REAL;
+    group_RunNumberF : USINT;
+    jerk : REAL;
+    lastExe : BOOL;
+    stage : USINT;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 0 AND Execute AND NOT lastExe AND NOT Active THEN
+    IF AxesGroup < 0 OR AxesGroup > 20 THEN
+        ErrorID := 16#05;
+    END_IF;
+    AxesGroup_State := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 4(* AG_GS *));
+    IF AxesGroup_State = 0(* GS_GroupDisabled *) OR AxesGroup_State = 1(* GS_GroupErrorstop *) THEN
+        ErrorID := 16#01 (* ER_StateError *);
+    ELSIF AxesGroup_State = 4(* GS_GroupStopping *) THEN
+        ErrorID := 16#20(* ER_AxisState_Stopping_Error *);
+    END_IF;
+    IF Velocity < 0 OR Acceleration <= 0 OR Deceleration <= 0 OR Jerk < 0 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF CoordSystem <> 1(* CS_ACS *) AND CoordSystem <> 2(* CS_MCS *) AND CoordSystem <> 3(* CS_PCS *) THEN
+        ErrorID := 16#06(* ER_CoordSystem_ParameterError *);
+    END_IF;
+    IF BufferMode >= 6 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF TransitionMode >= 5 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF ErrorID <> 0(* ER_NoError *) THEN
+        Error := TRUE;
+    ELSE
+        AxesGroup_Axis_Sum_In_Group := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 5(* AG_ASUM *));
+        axesgroup := AxesGroup;
+        acc := Acceleration;
+        dec := Deceleration;
+        jerk := Jerk;
+        bufferMode := BufferMode;
+        transitionMode := TransitionMode;
+        AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+        group_RunNumberF := AxesGroup_Run_Number;
+        stage := 1(* FBS_WaitBuffer *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) OR stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number <> group_RunNumberF THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) THEN
+    IF bufferMode = 0(* BM_Aborting *) THEN
+        IF ErrorID = 0 THEN
+            group_RunNumberF := AxesGroup_Run_Number MOD 255 + 1; // [1,255]
+        END_IF;
+    END_IF;
+    IF ErrorID = 0(* ER_NoError *) THEN
+        stage := 2(* FBS_InBuffer *);
+    ELSE
+        Error := TRUE;
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 416(* AG_BZ *));
+    IF AxesGroup_Busy = 0 THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF transitionMode = 0 AND AxesGroup_Now_TCP_Velocity > 1 THEN
+            Error := TRUE;
+            stage := 0(* FBS_WaitExec *);
+        ELSE
+            stage := 3(* FBS_CalcRoute *);
+        END_IF;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 19 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_19
+VAR
+    AxesGroup_Buffer_Busy : USINT;
+    AxesGroup_Buffered_TCP_Velocity : REAL;
+    AxesGroup_Interrupt : USINT;
+    axesgroup : USINT;
+    pp_done : BOOL;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 4(* FBS_Moving *) THEN
+    IF AxesGroup_Interrupt = 1 THEN
+        stage := 5(* FBS_CalcAbort *);
+    END_IF;
+    AxesGroup_Buffer_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 417(* AG_BBZ *));
+    IF AxesGroup_Buffer_Busy > 1 THEN
+        AxesGroup_Buffered_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 236(* AG_BTV *));
+            2(* BM_Blendinglow *) : IF vel < AxesGroup_Buffered_TCP_Velocity THEN blendVel := vel; ELSE blendVel := AxesGroup_Buffered_TCP_Velocity; END_IF;
+    END_IF;
+    IF pp_done THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 20 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_20
+VAR
+    AxesGroup_Interrupt : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    BufCal_acc : REAL;
+    BufCal_dec : REAL;
+    BufCal_jerk : REAL;
+    BufCal_vel : REAL;
+    BufCal_vs : REAL;
+    acc : REAL;
+    axesgroup : USINT;
+    dec : REAL;
+    i : USINT;
+    jerk : REAL;
+    stage : USINT;
+    stop_time : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 5(* FBS_CalcAbort *) THEN
+    FOR i := 1 TO 6 DO
+        nowpoint_tcp[i] := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 316(* AG_NTP *) + 4 * (i - 1));
+    AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+    BufCal_vs := AxesGroup_Now_TCP_Velocity * 1000;
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number = 0 OR AxesGroup_Interrupt = 1 THEN
+        BufCal_dec := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 228(* AG_ID *));
+        BufCal_jerk := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 232(* AG_IJ *));
+    ELSE
+        BufCal_dec := dec;
+        BufCal_jerk := jerk;
+    END_IF;
+    BufCal_vel := BufCal_vs;
+    BufCal_acc := acc;
+    pointbuf_dtime[1] := 0;    // 将pointbuf清空
+    IF BufCal_jerk > 0 THEN    // S型
+    ELSE                       // 梯形
+        stop_time := BufCal_vs / BufCal_dec;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 21 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_21
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Busy : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    AxesGroup_State : USINT;
+    axesgroup : USINT;
+    group_RunNumberF : USINT;
+    lastExe : BOOL;
+    stage : USINT;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 0 AND Execute AND NOT lastExe AND NOT Active THEN
+    IF AxesGroup < 0 OR AxesGroup > 20 THEN
+        ErrorID := 16#05;
+    END_IF;
+    AxesGroup_State := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 4(* AG_GS *));
+    IF AxesGroup_State = 0(* GS_GroupDisabled *) OR AxesGroup_State = 1(* GS_GroupErrorstop *) THEN
+        ErrorID := 16#01 (* ER_StateError *);
+    ELSIF AxesGroup_State = 4(* GS_GroupStopping *) THEN
+        ErrorID := 16#20(* ER_AxisState_Stopping_Error *);
+    END_IF;
+    IF Velocity < 0 OR Acceleration <= 0 OR Deceleration <= 0 OR Jerk < 0 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF CoordSystem <> 1(* CS_ACS *) AND CoordSystem <> 2(* CS_MCS *) AND CoordSystem <> 3(* CS_PCS *) THEN
+        ErrorID := 16#06(* ER_CoordSystem_ParameterError *);
+    END_IF;
+    IF BufferMode >= 6 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF TransitionMode >= 5 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF ErrorID <> 0(* ER_NoError *) THEN
+        Error := TRUE;
+    ELSE
+        AxesGroup_Axis_Sum_In_Group := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 5(* AG_ASUM *));
+        axesgroup := AxesGroup;
+        transitionMode := TransitionMode;
+        AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+        group_RunNumberF := AxesGroup_Run_Number;
+        stage := 1(* FBS_WaitBuffer *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) OR stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number <> group_RunNumberF THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) THEN
+    IF ErrorID = 0(* ER_NoError *) THEN
+        stage := 2(* FBS_InBuffer *);
+    ELSE
+        Error := TRUE;
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 416(* AG_BZ *));
+    IF AxesGroup_Busy = 0 THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF transitionMode = 0 AND AxesGroup_Now_TCP_Velocity > 1 THEN
+            Error := TRUE;
+            stage := 0(* FBS_WaitExec *);
+        ELSE
+            stage := 3(* FBS_CalcRoute *);
+        END_IF;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 22 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_22
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Busy : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    AxesGroup_State : USINT;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    group_RunNumberF : USINT;
+    i : USINT;
+    lastExe : BOOL;
+    stage : USINT;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 0 AND Execute AND NOT lastExe AND NOT Active THEN
+    IF AxesGroup < 0 OR AxesGroup > 20 THEN
+        ErrorID := 16#05;
+    END_IF;
+    AxesGroup_State := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 4(* AG_GS *));
+    IF AxesGroup_State = 0(* GS_GroupDisabled *) OR AxesGroup_State = 1(* GS_GroupErrorstop *) THEN
+        ErrorID := 16#01 (* ER_StateError *);
+    ELSIF AxesGroup_State = 4(* GS_GroupStopping *) THEN
+        ErrorID := 16#20(* ER_AxisState_Stopping_Error *);
+    END_IF;
+    IF Velocity < 0 OR Acceleration <= 0 OR Deceleration <= 0 OR Jerk < 0 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF CoordSystem <> 1(* CS_ACS *) AND CoordSystem <> 2(* CS_MCS *) AND CoordSystem <> 3(* CS_PCS *) THEN
+        ErrorID := 16#06(* ER_CoordSystem_ParameterError *);
+    END_IF;
+    IF BufferMode >= 6 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF TransitionMode >= 5 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF ErrorID <> 0(* ER_NoError *) THEN
+        Error := TRUE;
+    ELSE
+        AxesGroup_Axis_Sum_In_Group := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 5(* AG_ASUM *));
+        FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+            AxesGroup_JointDirections[i] := USINT_TO_SINT(MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 88(* AG_JD *) + (i - 1)));
+            AxesGroup_JointOffsets[i] := MC_RdAxesPar_D(AxesNum := AxesGroup,AddrOffset := 96(* AG_JO *) + (i - 1) * 4);
+            AxesGroup_JointGearRatios[i] := MC_RdAxesPar_FL(AxesNum := AxesGroup,AddrOffset := 192(* AG_JGR *) + (i - 1) * 4);
+            AxesGroup_Axis_Num_In_Group[i - 1] := USINT_TO_SINT(MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 6(* AG_ANUM *) + i - 1));
+        axesgroup := AxesGroup;
+        bufferMode := BufferMode;
+        transitionMode := TransitionMode;
+        AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+        group_RunNumberF := AxesGroup_Run_Number;
+        stage := 1(* FBS_WaitBuffer *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) OR stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number <> group_RunNumberF THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) THEN
+    IF bufferMode = 0(* BM_Aborting *) THEN
+        IF ErrorID = 0 THEN
+            group_RunNumberF := AxesGroup_Run_Number MOD 255 + 1; // [1,255]
+        END_IF;
+    END_IF;
+    IF ErrorID = 0(* ER_NoError *) THEN
+        stage := 2(* FBS_InBuffer *);
+    ELSE
+        Error := TRUE;
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 416(* AG_BZ *));
+    IF AxesGroup_Busy = 0 THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF transitionMode = 0 AND AxesGroup_Now_TCP_Velocity > 1 THEN
+            Error := TRUE;
+            stage := 0(* FBS_WaitExec *);
+        ELSE
+            stage := 3(* FBS_CalcRoute *);
+        END_IF;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 23 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_23
+VAR
+    AxesGroup_Interrupt : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    BufCal_dec : REAL;
+    BufCal_jerk : REAL;
+    BufCal_vs : REAL;
+    axesgroup : USINT;
+    dec : REAL;
+    i : USINT;
+    jerk : REAL;
+    now_s : REAL;
+    path_point_end : USINT;
+    path_point_start : USINT;
+    stage : USINT;
+    stop_s : REAL;
+    stop_time : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 5(* FBS_CalcAbort *) THEN
+    AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+    BufCal_vs := AxesGroup_Now_TCP_Velocity * 1000;
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number = 0 OR AxesGroup_Interrupt = 1 THEN
+        BufCal_dec := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 228(* AG_ID *));
+        BufCal_jerk := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 232(* AG_IJ *));
+    ELSE
+        BufCal_dec := dec;
+        BufCal_jerk := jerk;
+    END_IF;
+    IF BufCal_jerk > 0 THEN    // S型
+    ELSE                       // 梯形
+        stop_time := BufCal_vs / BufCal_dec;
+        stop_s := BufCal_vs * stop_time - BufCal_dec * stop_time * stop_time / 2.0;
+    END_IF;
+    now_s := path_s[path_point_start];
+    FOR i := 99 TO 2 BY -1 DO
+        IF path_s[i] >= now_s + stop_s THEN
+            path_point_end := i;
+        END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 24 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_24
+VAR
+    AxesGroup_Buffer_Busy : USINT;
+    AxesGroup_Buffered_Transition_Mode : USINT;
+    AxesGroup_Interrupt : USINT;
+    axesgroup : USINT;
+    pp_done : BOOL;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 4(* FBS_Moving *) THEN
+    IF AxesGroup_Interrupt = 1 THEN
+        stage := 5(* FBS_CalcAbort *);
+    END_IF;
+    AxesGroup_Buffer_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 417(* AG_BBZ *));
+        AxesGroup_Buffered_Transition_Mode := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 421(* AG_BTM *));
+    END_IF;
+    IF pp_done THEN
+        Error := FALSE;
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 25 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_25
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Interrupt : USINT;
+    i : USINT;
+    pointnumber : USINT;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 5(* FBS_CalcAbort *) THEN
+    IF pointnumber = 0 THEN
+        Error := TRUE;
+    END_IF;
+    FOR i := 1 TO pointnumber DO
+        IF pointbuf_dtime[i] <= 0.00001 THEN
+            Error := TRUE;
+        END_IF;
+        IF Error THEN
+            FOR i := 1 TO pointnumber DO
+        END_IF;
+    IF NOT Error THEN
+        IF AxesGroup_Interrupt = 1 THEN
+            stage := 8(* FBS_Inerrupt *);
+        ELSE
+            stage := 7(* FBS_RunBlend *);
+        END_IF;
+        FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+            pp_blend_exe[i] := TRUE;
+    ELSE
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 26 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_26
+VAR
+    AxesGroup_Buffered_Transition_Mode : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    axesgroup : USINT;
+    i : USINT;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 7(* FBS_RunBlend *) THEN
+    IF AxesGroup_Buffered_Transition_Mode = 0 THEN
+    ELSIF AxesGroup_Buffered_Transition_Mode = 1(* TM_StartV *) THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+    ELSIF AxesGroup_Buffered_Transition_Mode = 2(* TM_ConstantV *) THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+    ELSIF AxesGroup_Buffered_Transition_Mode = 3(* TM_CornerDis *) THEN
+        FOR i :=  1 TO 3 DO
+            AxesGroup_Now_TCP_Position[i] := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 316(* AG_NTP *) + 4 * (i - 1));
+    ELSIF AxesGroup_Buffered_Transition_Mode = 4(* TM_MaxCornerDeviation *) THEN
+        FOR i :=  1 TO 3 DO
+            AxesGroup_Now_TCP_Position[i] := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 316(* AG_NTP *) + 4 * (i - 1));
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 27 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_27
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Run_Number : USINT;
+    AxesGroup_State : USINT;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    dec : REAL;
+    group_RunNumberF : USINT;
+    jerk : REAL;
+    lastExe : BOOL;
+    stage : USINT;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 0 AND Execute AND NOT lastExe AND NOT Active THEN
+    IF AxesGroup < 0 OR AxesGroup > 20 THEN
+        ErrorID := 16#05;
+    END_IF;
+    AxesGroup_State := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 4(* AG_GS *));
+    IF AxesGroup_State = 0(* GS_GroupDisabled *) OR AxesGroup_State = 1(* GS_GroupErrorstop *) THEN
+        ErrorID := 16#01 (* ER_StateError *);
+    ELSIF AxesGroup_State = 4(* GS_GroupStopping *) THEN
+        ErrorID := 16#20(* ER_AxisState_Stopping_Error *);
+    END_IF;
+    IF Velocity < 0 OR Acceleration <= 0 OR Deceleration <= 0 OR Jerk < 0 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF CoordSystem <> 1(* CS_ACS *) AND CoordSystem <> 2(* CS_MCS *) AND CoordSystem <> 3(* CS_PCS *) THEN
+        ErrorID := 16#06(* ER_CoordSystem_ParameterError *);
+    END_IF;
+    IF BufferMode >= 6 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF TransitionMode >= 5 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF ErrorID <> 0(* ER_NoError *) THEN
+        Error := TRUE;
+    ELSE
+        AxesGroup_Axis_Sum_In_Group := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 5(* AG_ASUM *));
+        axesgroup := AxesGroup;
+        dec := Deceleration;
+        jerk := Jerk;
+        bufferMode := BufferMode;
+        transitionMode := TransitionMode;
+        AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+        group_RunNumberF := AxesGroup_Run_Number;
+        stage := 1(* FBS_WaitBuffer *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) OR stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number <> group_RunNumberF THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 28 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_28
+VAR
+    AxesGroup_Buffered_Transition_Mode : USINT;
+    AxesGroup_Buffered_Transition_Parameter : REAL;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    axesgroup : USINT;
+    blendVel : REAL;
+    d : REAL;
+    i : USINT;
+    now_motion_done : BOOL;
+    pp_blend_done : BOOL;
+    radius : REAL;
+    s_to_end : REAL;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 7(* FBS_RunBlend *) THEN
+    IF AxesGroup_Buffered_Transition_Mode = 0 THEN
+        IF pp_blend_done THEN
+            now_motion_done := TRUE;
+        END_IF;
+    ELSIF AxesGroup_Buffered_Transition_Mode = 1(* TM_StartV *) THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF AxesGroup_Now_TCP_Velocity <> 0 AND AxesGroup_Now_TCP_Velocity * 1000 <= AxesGroup_Buffered_Transition_Parameter * blendVel THEN
+            now_motion_done := TRUE;
+        END_IF;
+    ELSIF AxesGroup_Buffered_Transition_Mode = 2(* TM_ConstantV *) THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF AxesGroup_Now_TCP_Velocity * 1000 <= AxesGroup_Buffered_Transition_Parameter * blendVel THEN
+            now_motion_done := TRUE;
+        END_IF;
+    ELSIF AxesGroup_Buffered_Transition_Mode = 3(* TM_CornerDis *) THEN
+        d := ESQR((AxesGroup_Now_TCP_Position[1] - endpoint_tcp[1]) * (AxesGroup_Now_TCP_Position[1] - endpoint_tcp[1]) +
+        s_to_end := 2.0 * radius * EASIN(d / radius / 2) + path_s[i - 1];
+        IF s_to_end <= AxesGroup_Buffered_Transition_Parameter THEN
+            now_motion_done := TRUE;
+        END_IF;
+    ELSIF AxesGroup_Buffered_Transition_Mode = 4(* TM_MaxCornerDeviation *) THEN
+        d := ESQR((AxesGroup_Now_TCP_Position[1] - endpoint_tcp[1]) * (AxesGroup_Now_TCP_Position[1] - endpoint_tcp[1]) +
+        s_to_end := 2.0 * radius * EASIN(d / radius / 2) + path_s[i - 1];
+        IF s_to_end <= AxesGroup_Buffered_Transition_Parameter THEN
+            now_motion_done := TRUE;
+        END_IF;
+    END_IF;
+    IF now_motion_done THEN
+        Active := FALSE;
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 29 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_29
+VAR
+    AxesGroup_Interrupt : USINT;
+    BufCal_dec : REAL;
+    BufCal_jerk : REAL;
+    axesgroup : USINT;
+    dec : REAL;
+    i : USINT;
+    jerk : REAL;
+    pp_blend_done : BOOL;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 8(* FBS_Inerrupt *) THEN
+    AxesGroup_Interrupt := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 422(* AG_TINR *));
+    IF pp_blend_done THEN
+        FOR i := 1 TO 6 DO
+            pp_blend_exe[i] := FALSE;
+    ELSIF AxesGroup_Interrupt = 0 AND NOT Active THEN
+        BufCal_dec := dec;
+        BufCal_jerk := jerk;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 30 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_30
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Kin_Transform : USINT;
+    AxesGroup_State : USINT;
+    axesgroup : USINT;
+    i : USINT;
+    lastExe : BOOL;
+    pathchoice : USINT;
+    stage : USINT;
+    transitionParameter : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 0 AND Execute AND NOT lastExe AND NOT Active THEN
+    IF AxesGroup < 0 OR AxesGroup > 20 THEN
+        ErrorID := 16#05;
+    END_IF;
+    AxesGroup_State := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 4(* AG_GS *));
+    IF AxesGroup_State = 0(* GS_GroupDisabled *) OR AxesGroup_State = 1(* GS_GroupErrorstop *) THEN
+        ErrorID := 16#01 (* ER_StateError *);
+    ELSIF AxesGroup_State = 4(* GS_GroupStopping *) THEN
+        ErrorID := 16#20(* ER_AxisState_Stopping_Error *);
+    END_IF;
+    IF Velocity < 0 OR Acceleration <= 0 OR Deceleration <= 0 OR Jerk < 0 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF CoordSystem <> 1(* CS_ACS *) AND CoordSystem <> 2(* CS_MCS *) AND CoordSystem <> 3(* CS_PCS *) THEN
+        ErrorID := 16#06(* ER_CoordSystem_ParameterError *);
+    END_IF;
+    IF BufferMode >= 6 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF TransitionMode >= 5 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF ErrorID <> 0(* ER_NoError *) THEN
+    ELSE
+        AxesGroup_Axis_Sum_In_Group := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 5(* AG_ASUM *));
+        AxesGroup_Kin_Transform := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 14(* AG_KT *));
+        FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+            AxesGroup_JointLimits[i * 2 - 1] := MC_RdAxesPar_FL(AxesNum := AxesGroup,AddrOffset := 756(* AG_JL *) + (i - 1) * 2 * 4);
+            AxesGroup_JointLimits[i * 2] := MC_RdAxesPar_FL(AxesNum := AxesGroup,AddrOffset := 756(* AG_JL *) + (i * 2 - 1) * 4);
+            AxesGroup_DenHartA[i] := MC_RdAxesPar_FL(AxesNum := AxesGroup,AddrOffset := 16(* AG_DHA *) + (i - 1) * 4);
+            AxesGroup_DenHartD[i] := MC_RdAxesPar_FL(AxesNum := AxesGroup,AddrOffset := 52(* AG_DHD *) + (i - 1) * 4);
+        AxesGroup_DenHartA[i] := MC_RdAxesPar_FL(AxesNum := AxesGroup,AddrOffset := 16(* AG_DHA *) + (i - 1) * 4);
+        AxesGroup_DenHartD[i] := MC_RdAxesPar_FL(AxesNum := AxesGroup,AddrOffset := 52(* AG_DHD *) + (i - 1) * 4);
+        AxesGroupOut := AxesGroup;
+        axesgroup := AxesGroup;
+        transitionParameter := TransitionParameter;
+        pathchoice := PathChoice;
+        FOR i := 1 TO 6 DO
+        Busy := TRUE;
+        stage := 1(* FBS_WaitBuffer *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 31 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_31
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    i : USINT;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 1(* FBS_WaitBuffer *) OR stage = 2(* FBS_InBuffer *) THEN
+END_IF;
+FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+END_PROGRAM
+
+===== BLOCK 32 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_32
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Kin_Transform : USINT;
+    AxesGroup_Run_Number : USINT;
+    AxesGroup_State : USINT;
+    acc : REAL;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    circMode : USINT;
+    coordSystem : USINT;
+    dec : REAL;
+    group_RunNumberF : USINT;
+    jerk : REAL;
+    lastExe : BOOL;
+    pathchoice : USINT;
+    stage : USINT;
+    transitionMode : USINT;
+    vel : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 0 AND Execute AND NOT lastExe AND NOT Active THEN
+    IF AxesGroup < 0 OR AxesGroup > 20 THEN
+        ErrorID := 16#05;
+    END_IF;
+    AxesGroup_State := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 4(* AG_GS *));
+    IF AxesGroup_State = 0(* GS_GroupDisabled *) OR AxesGroup_State = 1(* GS_GroupErrorstop *) THEN
+        ErrorID := 16#01 (* ER_StateError *);
+    ELSIF AxesGroup_State = 4(* GS_GroupStopping *) THEN
+        ErrorID := 16#20(* ER_AxisState_Stopping_Error *);
+    END_IF;
+    IF Velocity < 0 OR Acceleration <= 0 OR Deceleration <= 0 OR Jerk < 0 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF CoordSystem <> 1(* CS_ACS *) AND CoordSystem <> 2(* CS_MCS *) AND CoordSystem <> 3(* CS_PCS *) THEN
+        ErrorID := 16#06(* ER_CoordSystem_ParameterError *);
+    END_IF;
+    IF BufferMode >= 6 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF TransitionMode >= 5 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF ErrorID <> 0(* ER_NoError *) THEN
+        Error := TRUE;
+    ELSE
+        AxesGroup_Axis_Sum_In_Group := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 5(* AG_ASUM *));
+        AxesGroup_Kin_Transform := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 14(* AG_KT *));
+        axesgroup := AxesGroup;
+        vel := Velocity;
+        acc := Acceleration;
+        dec := Deceleration;
+        jerk := Jerk;
+        bufferMode := BufferMode;
+        transitionMode := TransitionMode;
+        circMode := CircMode;
+        pathchoice := PathChoice;
+        coordSystem := CoordSystem;
+        AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+        group_RunNumberF := AxesGroup_Run_Number;
+        stage := 1(* FBS_WaitBuffer *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) OR stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number <> group_RunNumberF THEN
+        CommandAborted := TRUE;
+        Busy := FALSE;
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 33 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_33
+VAR
+    AxesGroup_Buffer_Busy : USINT;
+    AxesGroup_Buffered_Transition_Mode : USINT;
+    AxesGroup_Buffered_Transition_Parameter : REAL;
+    AxesGroup_Run_Number : USINT;
+    WRParRes : BOOL;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    group_RunNumberF : USINT;
+    stage : USINT;
+    transitionMode : USINT;
+    vel : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 1(* FBS_WaitBuffer *) THEN
+    IF bufferMode = 0(* BM_Aborting *) THEN
+        AxesGroup_Buffered_Transition_Mode := transitionMode;
+        IF ErrorID = 0 THEN
+            group_RunNumberF := AxesGroup_Run_Number MOD 255 + 1; // [1,255]
+            WRParRes := MC_WrAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *),Data := group_RunNumberF);
+        END_IF;
+    ELSE
+        AxesGroup_Buffer_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 417(* AG_BBZ *));
+        IF AxesGroup_Buffer_Busy = 0 THEN
+            AxesGroup_Buffered_Transition_Mode := transitionMode;
+        END_IF;
+    END_IF;
+    IF ErrorID = 0(* ER_NoError *) THEN
+        WRParRes := MC_WrAxesPar_UB(AxesNum := axesgroup,AddrOffset := 417(* AG_BBZ *),Data := bufferMode);
+        WRParRes := MC_WrAxesPar_FL(AxesNum := axesgroup,AddrOffset := 236(* AG_BTV *), Data := vel);
+        WRParRes := MC_WrAxesPar_UB(AxesNum := axesgroup,AddrOffset := 421(* AG_BTM *),Data := AxesGroup_Buffered_Transition_Mode);
+        WRParRes := MC_WrAxesPar_FL(AxesNum := axesgroup,AddrOffset := 224(* AG_BTP *),Data := AxesGroup_Buffered_Transition_Parameter);
+        stage := 2(* FBS_InBuffer *);
+    ELSE
+        Error := TRUE;
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 34 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_34
+VAR
+    AxesGroup_Busy : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    WRParRes : BOOL;
+    axesgroup : USINT;
+    stage : USINT;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 416(* AG_BZ *));
+    IF AxesGroup_Busy = 0 THEN
+        WRParRes := MC_WrAxesPar_UB(AxesNum := axesgroup,AddrOffset := 417(* AG_BBZ *),Data := 0);
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF transitionMode = 0 AND AxesGroup_Now_TCP_Velocity > 1 THEN
+            Error := TRUE;
+            ErrorID := 16#0B(* ER_Transition_Compute_Error *);
+            stage := 0(* FBS_WaitExec *);
+        ELSE
+            stage := 3(* FBS_CalcRoute *);
+        END_IF;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 35 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_35
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Kin_Transform : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    BufCal_acc : REAL;
+    BufCal_dec : REAL;
+    BufCal_jerk : REAL;
+    BufCal_vel : REAL;
+    acc : REAL;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    circMode : USINT;
+    coordSystem : USINT;
+    dec : REAL;
+    i : USINT;
+    j : USINT;
+    jerk : REAL;
+    path_point_num : USINT;
+    pathchoice : USINT;
+    pointnumber : USINT;
+    stage : USINT;
+    svel : REAL;
+    transitionMode : USINT;
+    vel : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 3(* FBS_CalcRoute *) THEN
+    IF bufferMode = 0 (* BM_Aborting *) THEN
+        FOR i := 1 TO 6 DO
+            nowpoint_tcp[i] := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 316(* AG_NTP *) + 4 * (i - 1));
+            strpoint_tcp[i] := nowpoint_tcp[i];
+        FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+    ELSE
+        FOR i := 1 TO 6 DO
+            strpoint_tcp[i] := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 668(* AG_MAP *) + 4 * (i - 1));
+        FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+    END_IF;
+    IF coordSystem = 1(* CS_ACS *) THEN
+        FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+        FB_ACS_MCS_KinTransform1(axesgroup_kin := AxesGroup_Kin_Transform,ACS_JointAngle := endpoint_tcp[1],DenHartA := AxesGroup_DenHartA[1],DenHartD := AxesGroup_DenHartD[1],MCS_X => endpoint_tcp[1],MCS_Y => endpoint_tcp[2],MCS_Z => endpoint_tcp[3],MCS_RX => endpoint_tcp[4],MCS_RY => endpoint_tcp[5],MCS_RZ => endpoint_tcp[6]);
+        FB_ACS_MCS_KinTransform1(axesgroup_kin := AxesGroup_Kin_Transform,ACS_JointAngle := auxpoint_tcp[1],DenHartA := AxesGroup_DenHartA[1],DenHartD := AxesGroup_DenHartD[1],MCS_X => auxpoint_tcp[1],MCS_Y => auxpoint_tcp[2],MCS_Z => auxpoint_tcp[3],MCS_RX => auxpoint_tcp[4],MCS_RY => auxpoint_tcp[5],MCS_RZ => auxpoint_tcp[6]);
+    ELSIF  coordSystem = 2(* CS_MCS *) THEN
+        FOR i := 1 TO 6 DO
+    END_IF;
+    IF debug_print_PATH THEN
+        debug_printl_real1(0);
+        debug_printt_real1(nowpoint_tcp[1]); debug_printt_real1(nowpoint_tcp[2]); debug_printt_real1(nowpoint_tcp[3]); debug_printt_real1(nowpoint_tcp[4]); debug_printt_real1(nowpoint_tcp[5]); debug_printl_real1(nowpoint_tcp[6]);
+        debug_printt_real1(auxpoint_tcp[1]); debug_printt_real1(auxpoint_tcp[2]); debug_printt_real1(auxpoint_tcp[3]); debug_printt_real1(auxpoint_tcp[4]); debug_printt_real1(auxpoint_tcp[5]); debug_printl_real1(auxpoint_tcp[6]);
+        debug_printt_real1(endpoint_tcp[1]); debug_printt_real1(endpoint_tcp[2]); debug_printt_real1(endpoint_tcp[3]); debug_printt_real1(endpoint_tcp[4]); debug_printt_real1(endpoint_tcp[5]); debug_printl_real1(endpoint_tcp[6]);
+    END_IF;
+    FOR i := 1 TO 6 DO
+        circle_path[i] := strpoint_tcp[i];
+    FB_CircularPointsCal1(CircMode := circMode,PathChoice := pathchoice,
+    IF circMode = 1(* CM_Border *) THEN
+        auxpoint_tcp[1] := center_point[1];
+        auxpoint_tcp[2] := center_point[2];
+        auxpoint_tcp[3] := center_point[3];
+    END_IF;
+    path_s[1] := 0;
+    FOR i := 2 TO 100 DO
+    IF debug_print_PATH THEN
+        debug_printl_real1(0);
+        FOR i := 1 TO 100 DO
+            FOR j := 1 TO 6 DO
+                debug_printt_real1(circle_path[6 * (i - 1) + j]);
+    END_IF;
+    pointbuf_dtime[1] := 0;    // 将pointbuf清空
+    AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+    IF transitionMode <> 0 AND AxesGroup_Now_TCP_Velocity <> 0 THEN
+        FOR i := 1 TO 3 DO
+            AxesGroup_Now_TCP_Direction[i] := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 652(* AG_NTD *) + 4 * (i - 1));
+        IF bufferMode > 1 THEN
+            FOR i := 1 TO 6 DO
+        END_IF;
+                ELSE
+        FOR i := 1 TO 100 DO
+        FOR i := 1 TO 6 DO
+        FB_TransitionCurveCalc1(spoint_TCP := nowpoint_tcp[1], svel := svel,svel_dir := AxesGroup_Now_TCP_Direction[1],
+        IF debug_print_PATH THEN
+            debug_printl_real1(0);
+            FOR i := 1 TO 20 DO
+                FOR j := 1 TO 6 DO
+                    debug_printt_real1(pointbuf_tcp[6 * (i - 1) + j]);
+                    debug_printl_real1(pointbuf_dtime[i]);
+        END_IF;
+    END_IF;
+    BufCal_vel := vel;
+    BufCal_acc := acc;
+    BufCal_dec := dec;
+    BufCal_jerk := jerk;
+    path_point_num := 100;
+    FB_CircularPointBufCal1(circle_path := circle_path[1], center_point := center_point[1],path_s := path_s[1],path_point_num := path_point_num,pathchoice := pathchoice,
+    FOR i := 0 TO pointnumber - 1 DO
+        FB_MCS_ACS_KinTransform1(axesgroup_kin := AxesGroup_Kin_Transform,TCP_TargetPos := ADR(pointbuf_tcp[6 * i + 1]),DenHartA := ADR(AxesGroup_DenHartA[1]),DenHartD := ADR(AxesGroup_DenHartD[1]),JointLimits := ADR(AxesGroup_JointLimits[1]),JointAngles_now := ADR(Axis_last_angel[1]),JointAngle1 => pointbuf_acp[8 * i + 1],JointAngle2 => pointbuf_acp[8 * i + 2],JointAngle3 => pointbuf_acp[8 * i + 3],JointAngle4 => pointbuf_acp[8 * i + 4],JointAngle5 => pointbuf_acp[8 * i + 5],JointAngle6 => pointbuf_acp[8 * i + 6],JointAngle7 => pointbuf_acp[8 * i + 7],JointAngle8 => pointbuf_acp[8 * i + 8],Error => Error,ErrorID => );
+        FOR j := 1 TO AxesGroup_Axis_Sum_In_Group DO
+        IF Error THEN
+            ErrorID := 9000 + i;
+        END_IF;
+    FOR i := 1 TO pointnumber DO
+        pointbuf_pus1[i] := pointbuf_acp[8 * (i - 1) + 1] * AxesGroup_JointGearRatios[1] * AxesGroup_JointDirections[1] + AxesGroup_JointOffsets[1];
+        pointbuf_pus2[i] := pointbuf_acp[8 * (i - 1) + 2] * AxesGroup_JointGearRatios[2] * AxesGroup_JointDirections[2] + AxesGroup_JointOffsets[2];
+        pointbuf_pus3[i] := pointbuf_acp[8 * (i - 1) + 3] * AxesGroup_JointGearRatios[3] * AxesGroup_JointDirections[3] + AxesGroup_JointOffsets[3];
+        pointbuf_pus4[i] := pointbuf_acp[8 * (i - 1) + 4] * AxesGroup_JointGearRatios[4] * AxesGroup_JointDirections[4] + AxesGroup_JointOffsets[4];
+        pointbuf_pus5[i] := pointbuf_acp[8 * (i - 1) + 5] * AxesGroup_JointGearRatios[5] * AxesGroup_JointDirections[5] + AxesGroup_JointOffsets[5];
+        pointbuf_pus6[i] := pointbuf_acp[8 * (i - 1) + 6] * AxesGroup_JointGearRatios[6] * AxesGroup_JointDirections[6] + AxesGroup_JointOffsets[6];
+        pointbuf_pus7[i] := pointbuf_acp[8 * (i - 1) + 7] * AxesGroup_JointGearRatios[7] * AxesGroup_JointDirections[7] + AxesGroup_JointOffsets[7];
+        pointbuf_pus8[i] := pointbuf_acp[8 * (i - 1) + 8] * AxesGroup_JointGearRatios[8] * AxesGroup_JointDirections[8] + AxesGroup_JointOffsets[8];
+    IF pointnumber = 0 THEN
+        Error := TRUE;
+        ErrorID := 16#15(* ER_NoPathPoint *);
+        debug_printl_real1(-UINT_TO_REAL(ErrorID));
+        debug_printt_real1(nowpoint_tcp[1]); debug_printt_real1(nowpoint_tcp[2]); debug_printt_real1(nowpoint_tcp[3]); debug_printt_real1(nowpoint_tcp[4]); debug_printt_real1(nowpoint_tcp[5]); debug_printl_real1(nowpoint_tcp[6]);
+        debug_printt_real1(auxpoint_tcp[1]); debug_printt_real1(auxpoint_tcp[2]); debug_printt_real1(auxpoint_tcp[3]); debug_printt_real1(auxpoint_tcp[4]); debug_printt_real1(auxpoint_tcp[5]); debug_printl_real1(auxpoint_tcp[6]);
+        debug_printt_real1(endpoint_tcp[1]); debug_printt_real1(endpoint_tcp[2]); debug_printt_real1(endpoint_tcp[3]); debug_printt_real1(endpoint_tcp[4]); debug_printt_real1(endpoint_tcp[5]); debug_printl_real1(endpoint_tcp[6]);
+    ELSE
+        FOR i := 1 TO pointnumber DO
+            IF pointbuf_dtime[i] <= 0.0001 THEN
+                Error := TRUE;
+                ErrorID := 16#28(* ER_Path_Dtime_Zero *);
+            END_IF;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 36 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_36
+VAR
+    AxesGroup_Buffer_Busy : USINT;
+    AxesGroup_Buffered_Transition_Mode : USINT;
+    AxesGroup_Buffered_Transition_Parameter : REAL;
+    AxesGroup_Interrupt : USINT;
+    WRParRes : BOOL;
+    axesgroup : USINT;
+    pp_active : BOOL;
+    pp_active_last : BOOL;
+    pp_done : BOOL;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 4(* FBS_Moving *) THEN
+    IF AxesGroup_Interrupt = 1 THEN
+        stage := 5(* FBS_CalcAbort *);
+    END_IF;
+    AxesGroup_Buffer_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 417(* AG_BBZ *));
+        AxesGroup_Buffered_Transition_Mode := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 421(* AG_BTM *));
+        AxesGroup_Buffered_Transition_Parameter := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 224(* AG_BTP *));
+    END_IF;
+    pp_active_last := pp_active;
+    IF pp_done THEN
+        Done := TRUE;
+        Error := FALSE;
+        Busy := FALSE;
+        stage := 0(* FBS_WaitExec *);
+        WRParRes := MC_WrAxesPar_UB(AxesNum := axesgroup,AddrOffset := 416(* AG_BZ *), Data := 0);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 37 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_37
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Interrupt : USINT;
+    AxesGroup_Kin_Transform : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    BufCal_acc : REAL;
+    BufCal_dec : REAL;
+    BufCal_jerk : REAL;
+    BufCal_vel : REAL;
+    BufCal_vs : REAL;
+    acc : REAL;
+    axesgroup : USINT;
+    dec : REAL;
+    i : USINT;
+    j : USINT;
+    jerk : REAL;
+    path_point_end : USINT;
+    path_point_start : USINT;
+    pointnumber : USINT;
+    stage : USINT;
+    stop_s : REAL;
+    stop_time : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 5(* FBS_CalcAbort *) THEN
+    FOR i := 1 TO 6 DO
+    FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+    AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+    BufCal_vs := AxesGroup_Now_TCP_Velocity * 1000;
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number = 0 OR AxesGroup_Interrupt = 1 THEN
+        BufCal_dec := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 228(* AG_ID *));
+        BufCal_jerk := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 232(* AG_IJ *));
+    ELSE
+        BufCal_dec := dec;
+        BufCal_jerk := jerk;
+    END_IF;
+    BufCal_vel := BufCal_vs;
+    BufCal_acc := acc;
+    pointbuf_dtime[1] := 0;    // 将pointbuf清空
+    IF BufCal_jerk > 0 THEN    // S型
+        FB_S_Type_Motion_Par_Calc_3_Segments1(vs := BufCal_vs,vt := 0,acc := 0,dec := BufCal_dec,jerk := BufCal_jerk,t1 => ,t2 => ,t3 => ,s1 => ,s2 => ,s3 => ,t_3seg => stop_time,s_3seg => stop_s) ;
+    ELSE                       // 梯形
+        stop_time := BufCal_vs / BufCal_dec;
+        stop_s := BufCal_vs * stop_time - BufCal_dec * stop_time * stop_time / 2.0;
+    END_IF;
+    FOR i := 99 TO 2 BY -1 DO
+    FOR i := 99 TO 2 BY -1 DO
+    IF debug_print_PATH THEN
+        debug_printl_real1(0);
+        debug_printt_real1(path_point_start); debug_printt_real1(path_point_end); debug_printt_real1(BufCal_acc); debug_printt_real1(stop_time); debug_printl_real1(stop_s);
+        debug_printt_real1(BufCal_vs); debug_printt_real1(BufCal_vel); debug_printt_real1(BufCal_acc); debug_printt_real1(BufCal_dec); debug_printl_real1(BufCal_jerk);
+    END_IF;
+    FOR i := 0 TO pointnumber - 1 DO
+        FB_MCS_ACS_KinTransform1(axesgroup_kin := AxesGroup_Kin_Transform,TCP_TargetPos := ADR(pointbuf_tcp[6 * i + 1]),DenHartA := ADR(AxesGroup_DenHartA[1]),DenHartD := ADR(AxesGroup_DenHartD[1]),JointLimits := ADR(AxesGroup_JointLimits[1]),JointAngles_now := ADR(Axis_last_angel[1]),JointAngle1 => pointbuf_acp[8 * i + 1],JointAngle2 => pointbuf_acp[8 * i + 2],JointAngle3 => pointbuf_acp[8 * i + 3],JointAngle4 => pointbuf_acp[8 * i + 4],JointAngle5 => pointbuf_acp[8 * i + 5],JointAngle6 => pointbuf_acp[8 * i + 6],JointAngle7 => pointbuf_acp[8 * i + 7],JointAngle8 => pointbuf_acp[8 * i + 8],Error => Error,ErrorID => );
+        FOR j := 1 TO AxesGroup_Axis_Sum_In_Group DO
+        IF Error THEN
+            ErrorID := 9000 + i;
+        END_IF;
+    FOR i := 1 TO pointnumber DO
+        pointbuf_pus1[i] := pointbuf_acp[8 * (i - 1) + 1] * AxesGroup_JointGearRatios[1] * AxesGroup_JointDirections[1] + AxesGroup_JointOffsets[1];
+        pointbuf_pus2[i] := pointbuf_acp[8 * (i - 1) + 2] * AxesGroup_JointGearRatios[2] * AxesGroup_JointDirections[2] + AxesGroup_JointOffsets[2];
+        pointbuf_pus3[i] := pointbuf_acp[8 * (i - 1) + 3] * AxesGroup_JointGearRatios[3] * AxesGroup_JointDirections[3] + AxesGroup_JointOffsets[3];
+        pointbuf_pus4[i] := pointbuf_acp[8 * (i - 1) + 4] * AxesGroup_JointGearRatios[4] * AxesGroup_JointDirections[4] + AxesGroup_JointOffsets[4];
+        pointbuf_pus5[i] := pointbuf_acp[8 * (i - 1) + 5] * AxesGroup_JointGearRatios[5] * AxesGroup_JointDirections[5] + AxesGroup_JointOffsets[5];
+        pointbuf_pus6[i] := pointbuf_acp[8 * (i - 1) + 6] * AxesGroup_JointGearRatios[6] * AxesGroup_JointDirections[6] + AxesGroup_JointOffsets[6];
+        pointbuf_pus7[i] := pointbuf_acp[8 * (i - 1) + 7] * AxesGroup_JointGearRatios[7] * AxesGroup_JointDirections[7] + AxesGroup_JointOffsets[7];
+        pointbuf_pus8[i] := pointbuf_acp[8 * (i - 1) + 8] * AxesGroup_JointGearRatios[8] * AxesGroup_JointDirections[8] + AxesGroup_JointOffsets[8];
+    IF pointnumber = 0 THEN
+        Error := TRUE;
+        ErrorID := 16#15(* ER_NoPathPoint *);
+        debug_printl_real1(-UINT_TO_REAL(ErrorID));
+        debug_printt_real1(nowpoint_tcp[1]); debug_printt_real1(nowpoint_tcp[2]); debug_printt_real1(nowpoint_tcp[3]); debug_printt_real1(nowpoint_tcp[4]); debug_printt_real1(nowpoint_tcp[5]); debug_printl_real1(nowpoint_tcp[6]);
+        debug_printt_real1(auxpoint_tcp[1]); debug_printt_real1(auxpoint_tcp[2]); debug_printt_real1(auxpoint_tcp[3]); debug_printt_real1(auxpoint_tcp[4]); debug_printt_real1(auxpoint_tcp[5]); debug_printl_real1(auxpoint_tcp[6]);
+        debug_printt_real1(endpoint_tcp[1]); debug_printt_real1(endpoint_tcp[2]); debug_printt_real1(endpoint_tcp[3]); debug_printt_real1(endpoint_tcp[4]); debug_printt_real1(endpoint_tcp[5]); debug_printl_real1(endpoint_tcp[6]);
+    END_IF;
+    FOR i := 1 TO pointnumber DO
+        IF pointbuf_dtime[i] <= 0.00001 THEN
+            Error := TRUE;
+            ErrorID := 9898;
+        END_IF;
+        IF Error THEN
+            debug_printl_real1(0);
+            debug_printt_real1(path_point_start); debug_printt_real1(path_point_end); debug_printt_real1(BufCal_acc); debug_printt_real1(stop_time); debug_printl_real1(stop_s);
+            debug_printt_real1(BufCal_vs); debug_printt_real1(BufCal_vel); debug_printt_real1(BufCal_acc); debug_printt_real1(BufCal_dec); debug_printl_real1(BufCal_jerk);
+            debug_printl_real1(0);
+            debug_printt_real1(nowpoint_tcp[1]); debug_printt_real1(nowpoint_tcp[2]); debug_printt_real1(nowpoint_tcp[3]); debug_printt_real1(nowpoint_tcp[4]); debug_printt_real1(nowpoint_tcp[5]); debug_printl_real1(nowpoint_tcp[6]);
+            debug_printt_real1(auxpoint_tcp[1]); debug_printt_real1(auxpoint_tcp[2]); debug_printt_real1(auxpoint_tcp[3]); debug_printt_real1(auxpoint_tcp[4]); debug_printt_real1(auxpoint_tcp[5]); debug_printl_real1(auxpoint_tcp[6]);
+            debug_printt_real1(endpoint_tcp[1]); debug_printt_real1(endpoint_tcp[2]); debug_printt_real1(endpoint_tcp[3]); debug_printt_real1(endpoint_tcp[4]); debug_printt_real1(endpoint_tcp[5]); debug_printl_real1(endpoint_tcp[6]);
+            debug_printl_real1(0);
+            FOR i := 1 TO pointnumber DO
+                FOR j := 1 TO 6 DO
+                    debug_printt_real1(pointbuf_tcp[6 * (i - 1) + j]);
+                    debug_printl_real1(pointbuf_dtime[i]);
+        END_IF;
+    IF NOT Error THEN
+        IF AxesGroup_Interrupt = 1 THEN
+            stage := 8(* FBS_Inerrupt *);
+        END_IF;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 38 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_38
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Interrupt : USINT;
+    i : USINT;
+    j : USINT;
+    pointnumber : USINT;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 5(* FBS_CalcAbort *) THEN
+    IF NOT Error THEN
+        IF AxesGroup_Interrupt = 1 THEN
+        ELSE
+            stage := 7(* FBS_RunBlend *);
+        END_IF;
+        FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+        IF debug_print_TCP THEN
+            debug_printl_real1(0);
+            FOR i := 1 TO pointnumber DO
+                FOR j := 1 TO 6 DO
+                    debug_printt_real1(pointbuf_tcp[6 * (i - 1) + j]);
+                    debug_printl_real1(pointbuf_dtime[i]);
+        END_IF;
+        IF debug_print_ACP THEN
+            debug_printl_real1(0);
+            FOR i := 1 TO pointnumber DO
+                FOR j := 1 TO AxesGroup_Axis_Sum_In_Group - 1 DO
+                    debug_printt_real1(pointbuf_acp[8 * (i - 1) + j]);
+                    debug_printl_real1(pointbuf_acp[8 * (i - 1) + j]);
+        END_IF;
+    ELSE
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 39 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_39
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Buffer_Busy : USINT;
+    axesgroup : USINT;
+    i : USINT;
+    pointnumber : USINT;
+    pp_blend_abr1 : BOOL;
+    pp_blend_abr2 : BOOL;
+    pp_blend_abr3 : BOOL;
+    pp_blend_abr4 : BOOL;
+    pp_blend_abr5 : BOOL;
+    pp_blend_abr6 : BOOL;
+    pp_blend_abr7 : BOOL;
+    pp_blend_abr8 : BOOL;
+    pp_blend_act1 : BOOL;
+    pp_blend_act2 : BOOL;
+    pp_blend_act3 : BOOL;
+    pp_blend_act4 : BOOL;
+    pp_blend_act5 : BOOL;
+    pp_blend_act6 : BOOL;
+    pp_blend_act7 : BOOL;
+    pp_blend_act8 : BOOL;
+    pp_blend_bus1 : BOOL;
+    pp_blend_bus2 : BOOL;
+    pp_blend_bus3 : BOOL;
+    pp_blend_bus4 : BOOL;
+    pp_blend_bus5 : BOOL;
+    pp_blend_bus6 : BOOL;
+    pp_blend_bus7 : BOOL;
+    pp_blend_bus8 : BOOL;
+    pp_blend_don1 : BOOL;
+    pp_blend_don2 : BOOL;
+    pp_blend_don3 : BOOL;
+    pp_blend_don4 : BOOL;
+    pp_blend_don5 : BOOL;
+    pp_blend_don6 : BOOL;
+    pp_blend_don7 : BOOL;
+    pp_blend_don8 : BOOL;
+    pp_blend_done : BOOL;
+    pp_blend_eid1 : UINT;
+    pp_blend_eid2 : UINT;
+    pp_blend_eid3 : UINT;
+    pp_blend_eid4 : UINT;
+    pp_blend_eid5 : UINT;
+    pp_blend_eid6 : UINT;
+    pp_blend_eid7 : UINT;
+    pp_blend_eid8 : UINT;
+    pp_blend_err1 : BOOL;
+    pp_blend_err2 : BOOL;
+    pp_blend_err3 : BOOL;
+    pp_blend_err4 : BOOL;
+    pp_blend_err5 : BOOL;
+    pp_blend_err6 : BOOL;
+    pp_blend_err7 : BOOL;
+    pp_blend_err8 : BOOL;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 6(* FBS_CalcBlend *) THEN
+    AxesGroup_Buffer_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 417(* AG_BBZ *));
+END_IF;
+MC_PP_Blend1(Axis_num := axesgroup + 0,Execute := pp_blend_exe[1],ContinuousUpdate := FALSE,TimeScale := 1,PositionScale := 1,Offset := 0,IsAbsolute := TRUE,Position := pointbuf_pus1[1] ,DeltaTime := pointbuf_dtime[1] ,NumberOfPairs := pointnumber,BufferMode := 0,Axis_numOut => ,Done => pp_blend_don1,Busy => pp_blend_bus1,Active => pp_blend_act1,CommandAborted => pp_blend_abr1,Error => pp_blend_err1,ErrorID => pp_blend_eid1) ;
+MC_PP_Blend2(Axis_num := axesgroup + 1,Execute := pp_blend_exe[2],ContinuousUpdate := FALSE,TimeScale := 1,PositionScale := 1,Offset := 0,IsAbsolute := TRUE,Position := pointbuf_pus2[1] ,DeltaTime := pointbuf_dtime[1] ,NumberOfPairs := pointnumber,BufferMode := 0,Axis_numOut => ,Done => pp_blend_don2,Busy => pp_blend_bus2,Active => pp_blend_act2,CommandAborted => pp_blend_abr2,Error => pp_blend_err2,ErrorID => pp_blend_eid2) ;
+MC_PP_Blend3(Axis_num := axesgroup + 2,Execute := pp_blend_exe[3],ContinuousUpdate := FALSE,TimeScale := 1,PositionScale := 1,Offset := 0,IsAbsolute := TRUE,Position := pointbuf_pus3[1] ,DeltaTime := pointbuf_dtime[1] ,NumberOfPairs := pointnumber,BufferMode := 0,Axis_numOut => ,Done => pp_blend_don3,Busy => pp_blend_bus3,Active => pp_blend_act3,CommandAborted => pp_blend_abr3,Error => pp_blend_err3,ErrorID => pp_blend_eid3) ;
+MC_PP_Blend4(Axis_num := axesgroup + 3,Execute := pp_blend_exe[4],ContinuousUpdate := FALSE,TimeScale := 1,PositionScale := 1,Offset := 0,IsAbsolute := TRUE,Position := pointbuf_pus4[1] ,DeltaTime := pointbuf_dtime[1] ,NumberOfPairs := pointnumber,BufferMode := 0,Axis_numOut => ,Done => pp_blend_don4,Busy => pp_blend_bus4,Active => pp_blend_act4,CommandAborted => pp_blend_abr4,Error => pp_blend_err4,ErrorID => pp_blend_eid4) ;
+MC_PP_Blend5(Axis_num := axesgroup + 4,Execute := pp_blend_exe[5],ContinuousUpdate := FALSE,TimeScale := 1,PositionScale := 1,Offset := 0,IsAbsolute := TRUE,Position := pointbuf_pus5[1] ,DeltaTime := pointbuf_dtime[1] ,NumberOfPairs := pointnumber,BufferMode := 0,Axis_numOut => ,Done => pp_blend_don5,Busy => pp_blend_bus5,Active => pp_blend_act5,CommandAborted => pp_blend_abr5,Error => pp_blend_err5,ErrorID => pp_blend_eid5) ;
+MC_PP_Blend6(Axis_num := axesgroup + 5,Execute := pp_blend_exe[6],ContinuousUpdate := FALSE,TimeScale := 1,PositionScale := 1,Offset := 0,IsAbsolute := TRUE,Position := pointbuf_pus6[1] ,DeltaTime := pointbuf_dtime[1] ,NumberOfPairs := pointnumber,BufferMode := 0,Axis_numOut => ,Done => pp_blend_don6,Busy => pp_blend_bus6,Active => pp_blend_act6,CommandAborted => pp_blend_abr6,Error => pp_blend_err6,ErrorID => pp_blend_eid6) ;
+MC_PP_Blend7(Axis_num := axesgroup + 6,Execute := pp_blend_exe[7],ContinuousUpdate := FALSE,TimeScale := 1,PositionScale := 1,Offset := 0,IsAbsolute := TRUE,Position := pointbuf_pus7[1] ,DeltaTime := pointbuf_dtime[1] ,NumberOfPairs := pointnumber,BufferMode := 0,Axis_numOut => ,Done => pp_blend_don7,Busy => pp_blend_bus7,Active => pp_blend_act7,CommandAborted => pp_blend_abr7,Error => pp_blend_err7,ErrorID => pp_blend_eid7) ;
+MC_PP_Blend8(Axis_num := axesgroup + 7,Execute := pp_blend_exe[8],ContinuousUpdate := FALSE,TimeScale := 1,PositionScale := 1,Offset := 0,IsAbsolute := TRUE,Position := pointbuf_pus8[1] ,DeltaTime := pointbuf_dtime[1] ,NumberOfPairs := pointnumber,BufferMode := 0,Axis_numOut => ,Done => pp_blend_don8,Busy => pp_blend_bus8,Active => pp_blend_act8,CommandAborted => pp_blend_abr8,Error => pp_blend_err8,ErrorID => pp_blend_eid8) ;
+pp_blend_done := AxesGroup_Axis_Sum_In_Group <> 0;
+FOR i := 1 TO AxesGroup_Axis_Sum_In_Group DO
+    pp_blend_done := pp_blend_done AND pp_blend_don[i];
+END_PROGRAM
+
+===== BLOCK 40 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_40
+VAR
+    AxesGroup_Buffered_Transition_Mode : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    axesgroup : USINT;
+    i : USINT;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 7(* FBS_RunBlend *) THEN
+    IF AxesGroup_Buffered_Transition_Mode = 0 THEN
+    ELSIF AxesGroup_Buffered_Transition_Mode = 1(* TM_StartV *) THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+    ELSIF AxesGroup_Buffered_Transition_Mode = 2(* TM_ConstantV *) THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+    ELSIF AxesGroup_Buffered_Transition_Mode = 3(* TM_CornerDis *) THEN
+        FOR i :=  1 TO 3 DO
+    ELSIF AxesGroup_Buffered_Transition_Mode = 4(* TM_MaxCornerDeviation *) THEN
+        FOR i :=  1 TO 3 DO
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 41 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_41
+VAR
+    AxesGroup_Busy : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    AxesGroup_State : USINT;
+    axesgroup : USINT;
+    group_RunNumberF : USINT;
+    lastExe : BOOL;
+    stage : USINT;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 0 AND Execute AND NOT lastExe AND NOT Active THEN
+    IF AxesGroup < 0 OR AxesGroup > 20 THEN
+        ErrorID := 16#05;
+    END_IF;
+    AxesGroup_State := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 4(* AG_GS *));
+    IF AxesGroup_State = 0(* GS_GroupDisabled *) OR AxesGroup_State = 1(* GS_GroupErrorstop *) THEN
+        ErrorID := 16#01 (* ER_StateError *);
+    ELSIF AxesGroup_State = 4(* GS_GroupStopping *) THEN
+        ErrorID := 16#20(* ER_AxisState_Stopping_Error *);
+    END_IF;
+    IF Velocity < 0 OR Acceleration <= 0 OR Deceleration <= 0 OR Jerk < 0 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF CoordSystem <> 1(* CS_ACS *) AND CoordSystem <> 2(* CS_MCS *) AND CoordSystem <> 3(* CS_PCS *) THEN
+        ErrorID := 16#06(* ER_CoordSystem_ParameterError *);
+    END_IF;
+    IF BufferMode >= 6 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF TransitionMode >= 5 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF ErrorID <> 0(* ER_NoError *) THEN
+    ELSE
+        axesgroup := AxesGroup;
+        transitionMode := TransitionMode;
+        AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+        group_RunNumberF := AxesGroup_Run_Number;
+        stage := 1(* FBS_WaitBuffer *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) OR stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number <> group_RunNumberF THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) THEN
+    IF ErrorID = 0(* ER_NoError *) THEN
+        stage := 2(* FBS_InBuffer *);
+    ELSE
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 416(* AG_BZ *));
+    IF AxesGroup_Busy = 0 THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF transitionMode = 0 AND AxesGroup_Now_TCP_Velocity > 1 THEN
+            stage := 0(* FBS_WaitExec *);
+        ELSE
+            stage := 3(* FBS_CalcRoute *);
+        END_IF;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 42 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_42
+VAR
+    AxesGroup_Now_TCP_Velocity : REAL;
+    axesgroup : USINT;
+    d : REAL;
+    i : USINT;
+    radius : REAL;
+    stage : USINT;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 3(* FBS_CalcRoute *) THEN
+    radius := ESQR((circle_path[1] - center_point[1]) * (circle_path[1] - center_point[1]) +
+    FOR i := 2 TO 100 DO
+        d := ESQR((circle_path[6 * (i - 1) + 1] - circle_path[6 * (i - 2) + 1]) * (circle_path[6 * (i - 1) + 1] - circle_path[6 * (i - 2) + 1]) +
+        path_s[i] := 2.0 * radius * EASIN(d / radius / 2) + path_s[i - 1];
+    IF debug_print_PATH THEN
+        FOR i := 1 TO 100 DO
+                debug_printl_real1(path_s[i]);
+    END_IF;
+    AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+    IF transitionMode <> 0 AND AxesGroup_Now_TCP_Velocity <> 0 THEN
+                ELSE
+        FOR i := 1 TO 100 DO
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 43 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_43
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Busy : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    AxesGroup_State : USINT;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    group_RunNumberF : USINT;
+    lastExe : BOOL;
+    stage : USINT;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 0 AND Execute AND NOT lastExe AND NOT Active THEN
+    IF AxesGroup < 0 OR AxesGroup > 20 THEN
+        ErrorID := 16#05;
+    END_IF;
+    AxesGroup_State := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 4(* AG_GS *));
+    IF AxesGroup_State = 0(* GS_GroupDisabled *) OR AxesGroup_State = 1(* GS_GroupErrorstop *) THEN
+        ErrorID := 16#01 (* ER_StateError *);
+    ELSIF AxesGroup_State = 4(* GS_GroupStopping *) THEN
+        ErrorID := 16#20(* ER_AxisState_Stopping_Error *);
+    END_IF;
+    IF Velocity < 0 OR Acceleration <= 0 OR Deceleration <= 0 OR Jerk < 0 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF CoordSystem <> 1(* CS_ACS *) AND CoordSystem <> 2(* CS_MCS *) AND CoordSystem <> 3(* CS_PCS *) THEN
+        ErrorID := 16#06(* ER_CoordSystem_ParameterError *);
+    END_IF;
+    IF BufferMode >= 6 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF TransitionMode >= 5 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF ErrorID <> 0(* ER_NoError *) THEN
+        Error := TRUE;
+    ELSE
+        AxesGroup_Axis_Sum_In_Group := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 5(* AG_ASUM *));
+        axesgroup := AxesGroup;
+        bufferMode := BufferMode;
+        transitionMode := TransitionMode;
+        AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+        group_RunNumberF := AxesGroup_Run_Number;
+        stage := 1(* FBS_WaitBuffer *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) OR stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number <> group_RunNumberF THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) THEN
+    IF ErrorID = 0(* ER_NoError *) THEN
+        stage := 2(* FBS_InBuffer *);
+    ELSE
+        Error := TRUE;
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 416(* AG_BZ *));
+    IF AxesGroup_Busy = 0 THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF transitionMode = 0 AND AxesGroup_Now_TCP_Velocity > 1 THEN
+            Error := TRUE;
+            stage := 0(* FBS_WaitExec *);
+        ELSE
+            stage := 3(* FBS_CalcRoute *);
+        END_IF;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 44 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_44
+VAR
+    AxesGroup_Run_Number : USINT;
+    WRParRes : BOOL;
+    axesgroup : USINT;
+    group_RunNumberF : USINT;
+    i : USINT;
+    pp_active : BOOL;
+    pp_active_last : BOOL;
+    pp_busy : BOOL;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 4(* FBS_Moving *) THEN
+    IF pp_busy AND pp_active AND NOT pp_active_last THEN
+        AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+        group_RunNumberF := AxesGroup_Run_Number MOD 255 + 1; // [1,255]
+        WRParRes := MC_WrAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *),Data := group_RunNumberF);
+        WRParRes := MC_WrAxesPar_UB(AxesNum := axesgroup,AddrOffset := 417(* AG_BBZ *),Data := 0);
+        WRParRes := MC_WrAxesPar_UB(AxesNum := axesgroup,AddrOffset := 416(* AG_BZ *), Data := 1);
+        AxesGroup_Now_Axis_Motion_AimPulse[1] := pointbuf_pus1[pointnumber];
+        AxesGroup_Now_Axis_Motion_AimPulse[2] := pointbuf_pus2[pointnumber];
+        AxesGroup_Now_Axis_Motion_AimPulse[3] := pointbuf_pus3[pointnumber];
+        AxesGroup_Now_Axis_Motion_AimPulse[4] := pointbuf_pus4[pointnumber];
+        AxesGroup_Now_Axis_Motion_AimPulse[5] := pointbuf_pus5[pointnumber];
+        AxesGroup_Now_Axis_Motion_AimPulse[6] := pointbuf_pus6[pointnumber];
+        AxesGroup_Now_Axis_Motion_AimPulse[7] := pointbuf_pus7[pointnumber];
+        AxesGroup_Now_Axis_Motion_AimPulse[8] := pointbuf_pus8[pointnumber];
+        FOR i := 1 TO 6 DO
+            AxesGroup_TCP_Motion_Aimpos[i] := pointbuf_tcp[REAL_TO_UDINT(6 * (pointnumber - 1) + i)];
+            WRParRes := MC_WrAxesPar_FL(AxesNum := axesgroup,AddrOffset := 668(* AG_MAP *) + (i - 1) * 4, Data := AxesGroup_TCP_Motion_Aimpos[i]);
+            WRParRes := MC_WrAxesPar_FL(AxesNum := axesgroup,AddrOffset := 284(* AG_NMA *) + (i - 1) * 4, Data := AxesGroup_Now_Axis_Motion_AimPulse[i]);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 45 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_45
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Busy : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    AxesGroup_State : USINT;
+    acc : REAL;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    dec : REAL;
+    group_RunNumberF : USINT;
+    jerk : REAL;
+    lastExe : BOOL;
+    pathchoice : USINT;
+    stage : USINT;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 0 AND Execute AND NOT lastExe AND NOT Active THEN
+    IF AxesGroup < 0 OR AxesGroup > 20 THEN
+        ErrorID := 16#05;
+    END_IF;
+    AxesGroup_State := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 4(* AG_GS *));
+    IF AxesGroup_State = 0(* GS_GroupDisabled *) OR AxesGroup_State = 1(* GS_GroupErrorstop *) THEN
+        ErrorID := 16#01 (* ER_StateError *);
+    ELSIF AxesGroup_State = 4(* GS_GroupStopping *) THEN
+        ErrorID := 16#20(* ER_AxisState_Stopping_Error *);
+    END_IF;
+    IF Velocity < 0 OR Acceleration <= 0 OR Deceleration <= 0 OR Jerk < 0 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF CoordSystem <> 1(* CS_ACS *) AND CoordSystem <> 2(* CS_MCS *) AND CoordSystem <> 3(* CS_PCS *) THEN
+        ErrorID := 16#06(* ER_CoordSystem_ParameterError *);
+    END_IF;
+    IF BufferMode >= 6 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF TransitionMode >= 5 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF ErrorID <> 0(* ER_NoError *) THEN
+        Error := TRUE;
+    ELSE
+        AxesGroup_Axis_Sum_In_Group := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 5(* AG_ASUM *));
+        axesgroup := AxesGroup;
+        acc := Acceleration;
+        dec := Deceleration;
+        jerk := Jerk;
+        bufferMode := BufferMode;
+        transitionMode := TransitionMode;
+        pathchoice := PathChoice;
+        AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+        group_RunNumberF := AxesGroup_Run_Number;
+        stage := 1(* FBS_WaitBuffer *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) OR stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number <> group_RunNumberF THEN
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) THEN
+    IF bufferMode = 0(* BM_Aborting *) THEN
+        IF ErrorID = 0 THEN
+            group_RunNumberF := AxesGroup_Run_Number MOD 255 + 1; // [1,255]
+        END_IF;
+    END_IF;
+    IF ErrorID = 0(* ER_NoError *) THEN
+        stage := 2(* FBS_InBuffer *);
+    ELSE
+        Error := TRUE;
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+IF stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Busy := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 416(* AG_BZ *));
+    IF AxesGroup_Busy = 0 THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF transitionMode = 0 AND AxesGroup_Now_TCP_Velocity > 1 THEN
+            Error := TRUE;
+            stage := 0(* FBS_WaitExec *);
+        ELSE
+            stage := 3(* FBS_CalcRoute *);
+        END_IF;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 46 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_46
+VAR
+    AxesGroup_Interrupt : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    BufCal_acc : REAL;
+    BufCal_dec : REAL;
+    BufCal_jerk : REAL;
+    BufCal_vel : REAL;
+    BufCal_vs : REAL;
+    acc : REAL;
+    axesgroup : USINT;
+    d : REAL;
+    dec : REAL;
+    i : USINT;
+    jerk : REAL;
+    now_s : REAL;
+    path_point_end : USINT;
+    path_point_num : USINT;
+    path_point_start : USINT;
+    pointnumber : USINT;
+    radius : REAL;
+    stage : USINT;
+    stop_s : REAL;
+    stop_time : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 5(* FBS_CalcAbort *) THEN
+    AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+    BufCal_vs := AxesGroup_Now_TCP_Velocity * 1000;
+    d := ESQR((nowpoint_tcp[1] - circle_path[1]) * (nowpoint_tcp[1] - circle_path[1]) +
+    now_s := 2.0 * radius * EASIN(d / radius / 2);
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number = 0 OR AxesGroup_Interrupt = 1 THEN
+        BufCal_dec := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 228(* AG_ID *));
+        BufCal_jerk := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 232(* AG_IJ *));
+    ELSE
+        BufCal_dec := dec;
+        BufCal_jerk := jerk;
+    END_IF;
+    BufCal_vel := BufCal_vs;
+    BufCal_acc := acc;
+    pointbuf_dtime[1] := 0;    // 将pointbuf清空
+    IF BufCal_jerk > 0 THEN    // S型
+    ELSE                       // 梯形
+        stop_time := BufCal_vs / BufCal_dec;
+        stop_s := BufCal_vs * stop_time - BufCal_dec * stop_time * stop_time / 2.0;
+    END_IF;
+    FOR i := 99 TO 2 BY -1 DO
+        IF path_s[i] >= now_s THEN
+            path_point_start := i;
+        END_IF;
+    now_s := path_s[path_point_start];
+    FOR i := 99 TO 2 BY -1 DO
+        IF path_s[i] >= now_s + stop_s THEN
+            path_point_end := i;
+        END_IF;
+    path_point_num := path_point_end - path_point_start + 1;
+    IF debug_print_PATH THEN
+        debug_printt_real1(path_point_start); debug_printt_real1(path_point_end); debug_printt_real1(BufCal_acc); debug_printt_real1(stop_time); debug_printl_real1(stop_s);
+    END_IF;
+    FB_CircularPointBufCal1(circle_path := circle_path[6 * (path_point_start - 1) + 1], center_point := center_point[1],path_s := path_s[path_point_start],
+    IF pointnumber = 0 THEN
+        Error := TRUE;
+    END_IF;
+    FOR i := 1 TO pointnumber DO
+        IF pointbuf_dtime[i] <= 0.00001 THEN
+            Error := TRUE;
+        END_IF;
+        IF Error THEN
+            debug_printt_real1(path_point_start); debug_printt_real1(path_point_end); debug_printt_real1(BufCal_acc); debug_printt_real1(stop_time); debug_printl_real1(stop_s);
+            FOR i := 1 TO pointnumber DO
+        END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 47 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_47
+VAR
+    AxesGroup_Interrupt : USINT;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    AxesGroup_Run_Number : USINT;
+    BufCal_acc : REAL;
+    BufCal_dec : REAL;
+    BufCal_jerk : REAL;
+    BufCal_vs : REAL;
+    axesgroup : USINT;
+    dec : REAL;
+    i : USINT;
+    jerk : REAL;
+    now_s : REAL;
+    path_point_end : USINT;
+    path_point_start : USINT;
+    stage : USINT;
+    stop_s : REAL;
+    stop_time : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 5(* FBS_CalcAbort *) THEN
+    AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+    BufCal_vs := AxesGroup_Now_TCP_Velocity * 1000;
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number = 0 OR AxesGroup_Interrupt = 1 THEN
+        BufCal_dec := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 228(* AG_ID *));
+        BufCal_jerk := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 232(* AG_IJ *));
+    ELSE
+        BufCal_dec := dec;
+        BufCal_jerk := jerk;
+    END_IF;
+    IF BufCal_jerk > 0 THEN    // S型
+    ELSE                       // 梯形
+        stop_time := BufCal_vs / BufCal_dec;
+        stop_s := BufCal_vs * stop_time - BufCal_dec * stop_time * stop_time / 2.0;
+    END_IF;
+    now_s := path_s[path_point_start];
+    FOR i := 99 TO 2 BY -1 DO
+        IF path_s[i] >= now_s + stop_s THEN
+            path_point_end := i;
+        END_IF;
+    IF debug_print_PATH THEN
+        debug_printt_real1(path_point_start); debug_printt_real1(path_point_end); debug_printt_real1(BufCal_acc); debug_printt_real1(stop_time); debug_printl_real1(stop_s);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 48 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_48
+VAR
+    AxesGroup_Axis_Sum_In_Group : USINT;
+    AxesGroup_Run_Number : USINT;
+    AxesGroup_State : USINT;
+    axesgroup : USINT;
+    bufferMode : USINT;
+    group_RunNumberF : USINT;
+    lastExe : BOOL;
+    stage : USINT;
+    transitionMode : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 0 AND Execute AND NOT lastExe AND NOT Active THEN
+    IF AxesGroup < 0 OR AxesGroup > 20 THEN
+        ErrorID := 16#05;
+    END_IF;
+    AxesGroup_State := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 4(* AG_GS *));
+    IF AxesGroup_State = 0(* GS_GroupDisabled *) OR AxesGroup_State = 1(* GS_GroupErrorstop *) THEN
+        ErrorID := 16#01 (* ER_StateError *);
+    ELSIF AxesGroup_State = 4(* GS_GroupStopping *) THEN
+        ErrorID := 16#20(* ER_AxisState_Stopping_Error *);
+    END_IF;
+    IF Velocity < 0 OR Acceleration <= 0 OR Deceleration <= 0 OR Jerk < 0 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF CoordSystem <> 1(* CS_ACS *) AND CoordSystem <> 2(* CS_MCS *) AND CoordSystem <> 3(* CS_PCS *) THEN
+        ErrorID := 16#06(* ER_CoordSystem_ParameterError *);
+    END_IF;
+    IF BufferMode >= 6 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF TransitionMode >= 5 THEN
+        ErrorID := 16#02(* ER_ParameterError *);
+    END_IF;
+    IF ErrorID <> 0(* ER_NoError *) THEN
+        Error := TRUE;
+    ELSE
+        AxesGroup_Axis_Sum_In_Group := MC_RdAxesPar_UB(AxesNum := AxesGroup,AddrOffset := 5(* AG_ASUM *));
+        axesgroup := AxesGroup;
+        bufferMode := BufferMode;
+        transitionMode := TransitionMode;
+        AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+        group_RunNumberF := AxesGroup_Run_Number;
+        stage := 1(* FBS_WaitBuffer *);
+    END_IF;
+END_IF;
+IF stage = 1(* FBS_WaitBuffer *) OR stage = 2(* FBS_InBuffer *) THEN
+    AxesGroup_Run_Number := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 415(* AG_RN *));
+    IF AxesGroup_Run_Number <> group_RunNumberF THEN
+        CommandAborted := TRUE;
+        stage := 0(* FBS_WaitExec *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 49 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_49
+VAR
+    AxesGroup_Buffered_Transition_Mode : USINT;
+    AxesGroup_Buffered_Transition_Parameter : REAL;
+    AxesGroup_Now_TCP_Velocity : REAL;
+    WRParRes : BOOL;
+    axesgroup : USINT;
+    blendVel : REAL;
+    d : REAL;
+    i : USINT;
+    now_motion_done : BOOL;
+    pp_blend_done : BOOL;
+    radius : REAL;
+    s_to_end : REAL;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 7(* FBS_RunBlend *) THEN
+    IF AxesGroup_Buffered_Transition_Mode = 0 THEN
+        IF pp_blend_done THEN
+            now_motion_done := TRUE;
+        END_IF;
+    ELSIF AxesGroup_Buffered_Transition_Mode = 1(* TM_StartV *) THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF AxesGroup_Now_TCP_Velocity <> 0 AND AxesGroup_Now_TCP_Velocity * 1000 <= AxesGroup_Buffered_Transition_Parameter * blendVel THEN
+            now_motion_done := TRUE;
+        END_IF;
+    ELSIF AxesGroup_Buffered_Transition_Mode = 2(* TM_ConstantV *) THEN
+        AxesGroup_Now_TCP_Velocity := MC_RdAxesPar_FL(AxesNum := axesgroup,AddrOffset := 648(* AG_NTV *));
+        IF AxesGroup_Now_TCP_Velocity * 1000 <= AxesGroup_Buffered_Transition_Parameter * blendVel THEN
+            now_motion_done := TRUE;
+        END_IF;
+    ELSIF AxesGroup_Buffered_Transition_Mode = 3(* TM_CornerDis *) THEN
+        d := ESQR((AxesGroup_Now_TCP_Position[1] - endpoint_tcp[1]) * (AxesGroup_Now_TCP_Position[1] - endpoint_tcp[1]) +
+        s_to_end := 2.0 * radius * EASIN(d / radius / 2) + path_s[i - 1];
+        IF s_to_end <= AxesGroup_Buffered_Transition_Parameter THEN
+            now_motion_done := TRUE;
+        END_IF;
+    ELSIF AxesGroup_Buffered_Transition_Mode = 4(* TM_MaxCornerDeviation *) THEN
+        d := ESQR((AxesGroup_Now_TCP_Position[1] - endpoint_tcp[1]) * (AxesGroup_Now_TCP_Position[1] - endpoint_tcp[1]) +
+        s_to_end := 2.0 * radius * EASIN(d / radius / 2) + path_s[i - 1];
+        IF s_to_end <= AxesGroup_Buffered_Transition_Parameter THEN
+            now_motion_done := TRUE;
+        END_IF;
+    END_IF;
+    IF now_motion_done THEN
+        now_motion_done := FALSE;
+        Busy := FALSE;
+        Active := FALSE;
+        Done := NOT CommandAborted;
+        stage := 0(* FBS_WaitExec *);
+        WRParRes := MC_WrAxesPar_UB(AxesNum := axesgroup,AddrOffset := 416(* AG_BZ *), Data := 0);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 50 =====
+
+PROGRAM MC_MoveCircularRelative_BLOCK_50
+VAR
+    AxesGroup_Interrupt : USINT;
+    WRParRes : BOOL;
+    axesgroup : USINT;
+    i : USINT;
+    pp_blend_done : BOOL;
+    pp_done : BOOL;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 8(* FBS_Inerrupt *) THEN
+    AxesGroup_Interrupt := MC_RdAxesPar_UB(AxesNum := axesgroup,AddrOffset := 422(* AG_TINR *));
+    IF pp_blend_done THEN
+        Active := FALSE;
+        FOR i := 1 TO 6 DO
+            pp_exe[i] := FALSE;
+    END_IF;
+END_IF;
+IF Error AND Active THEN
+    IF pp_done OR pp_blend_done THEN
+        Busy := FALSE;
+        Active := FALSE;
+        WRParRes := MC_WrAxesPar_UB(AxesNum := axesgroup,AddrOffset := 416(* AG_BZ *), Data := 0);
+    END_IF;
+END_IF;
+END_PROGRAM

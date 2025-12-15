@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List, Set, Tuple, Iterable, Dict, Optional
+from collections import defaultdict
+from typing import  Any, List, Set, Tuple, Iterable, Dict, Optional
 from .slicer import backward_slice   # 如果已经在上面 import 过就不用重复
 from .criteria import SlicingCriterion
 from .ast.nodes import Stmt, VarRef, ArrayAccess, FieldAccess, Literal, BinOp, CallExpr
@@ -838,6 +839,123 @@ def is_meaningful_block(block: FunctionalBlock, code_lines: list[str]) -> bool:
     return assign_count >= 3 and balanced and min_len_ok
 
 
+# -------------------------------------------------
+# 后处理 1：删除块中的“空 IF”
+# -------------------------------------------------
+
+def _remove_empty_ifs_in_block(block: FunctionalBlock, code_lines: List[str]) -> None:
+    """
+    在单个 FunctionalBlock 内删除“空 IF”结构：
+        IF <cond> THEN
+        END_IF;
+    判定是基于该 block 的 line_numbers：
+      - 只要在 IF 和 END_IF 之间，在本 block 中没有任何非空、非注释的行，
+        则视为“空 IF”，从 block.line_numbers 中移除 IF 和 END_IF 这两行。
+
+    注意：
+      - 不修改 code_lines，只是让这个 block 不再引用这些行号。
+      - 如果 IF 内有嵌套 IF 头出现在本 block 中，会被视为“有内容”，不会删除外层 IF。
+    """
+    if not block.line_numbers:
+        return
+
+    ln_set = set(block.line_numbers)
+    to_remove: Set[int] = set()
+    n = len(code_lines)
+
+    for ln in sorted(block.line_numbers):
+        if not (1 <= ln <= n):
+            continue
+
+        raw = code_lines[ln - 1]
+        stripped = _strip_st_comments(raw).strip()
+        upper = stripped.upper()
+
+        # 只处理 IF 头（排除 ELSIF）
+        if not _is_if_start(upper):
+            continue
+
+        end_ln = _scan_matching_end_if(ln, code_lines)
+        if not (1 <= end_ln <= n):
+            continue
+
+        # 在 [ln+1, end_ln-1] 范围内、当前 block 的行号中，是否有“实质内容”
+        has_content = False
+        for inner_ln in ln_set:
+            if ln < inner_ln < end_ln:
+                inner_raw = code_lines[inner_ln - 1]
+                inner_text = _strip_st_comments(inner_raw).strip()
+                if inner_text != "":
+                    # 任何非空文本都算内容（包括嵌套 IF/ELSIF/ELSE）
+                    has_content = True
+                    break
+
+        if not has_content:
+            # 视为“空 IF”，移除 IF 头和匹配的 END_IF 行（如果在本 block 中）
+            to_remove.add(ln)
+            if end_ln in ln_set:
+                to_remove.add(end_ln)
+
+    if to_remove:
+        block.line_numbers = sorted(ln for ln in block.line_numbers if ln not in to_remove)
+
+
+def remove_empty_ifs_in_blocks(
+    blocks: List[FunctionalBlock],
+    code_lines: List[str],
+) -> List[FunctionalBlock]:
+    """
+    对所有功能块执行 _remove_empty_ifs_in_block。
+    只修改每个 block 的 line_numbers，不改变 code_lines 本身。
+    """
+    for b in blocks:
+        _remove_empty_ifs_in_block(b, code_lines)
+    return blocks
+
+
+# -------------------------------------------------
+# 后处理 2：对完全重复的块去重（按源码文本）
+# -------------------------------------------------
+
+def dedup_blocks_by_code(
+    blocks: List[FunctionalBlock],
+    code_lines: List[str],
+) -> List[FunctionalBlock]:
+    """
+    按“切出来的源码文本是否完全相同”对功能块去重：
+      - 对每个 block，将其 line_numbers 对应的源码行（去掉行尾空白）拼成字符串作为 key；
+      - key 完全相同的 block 只保留出现的第一份，其余丢弃。
+
+    这可以去掉类似 BLOCK 1 / BLOCK 5 这种 PROGRAM 主体完全相同、
+    只是名字不同的重复块。
+    """
+    seen_keys: Set[str] = set()
+    unique_blocks: List[FunctionalBlock] = []
+
+    n = len(code_lines)
+
+    for b in blocks:
+        if not b.line_numbers:
+            continue
+
+        # 用本 block 的源码片段作为去重 key
+        body_lines: List[str] = []
+        for ln in sorted(set(b.line_numbers)):
+            if 1 <= ln <= n:
+                body_lines.append(code_lines[ln - 1].rstrip())
+
+        key = "\n".join(body_lines)
+
+        if key in seen_keys:
+            # 完全重复，丢弃
+            continue
+
+        seen_keys.add(key)
+        unique_blocks.append(b)
+
+    return unique_blocks
+
+
 # -----------------------
 # 高层封装：一键“功能块划分”
 # -----------------------
@@ -845,36 +963,68 @@ def is_meaningful_block(block: FunctionalBlock, code_lines: list[str]) -> bool:
 def extract_functional_blocks(
     prog_pdg,
     criteria: List[SlicingCriterion],
-    ir2ast_stmt: List[Stmt],
+    ir2ast_stmt: List,
     code_lines: List[str],
-    overlap_threshold: float = 0.5,
-    min_lines: int = 20,
+    overlap_threshold: float = 0.75,
+    min_lines: int = 12,
     max_lines: int = 150,
-    min_lines_stage: int = 6,
+    min_lines_stage: int = 8,
 ) -> List[FunctionalBlock]:
-    
+    """
+    基于多种切片准则挖掘功能块。
+
+    相比旧版本的主要变化：
+      1. 按 criterion.kind 分组后分别调用 cluster_slices，避免不同类型的切片彼此“吃掉”；
+      2. 默认 overlap_threshold 调高到 0.75，min_lines 降到 12，偏向生成更多的块；
+      3. split_blocks_by_stage 的 stage_var_names 更通用：包含 stage/state/step/phase/mode。
+
+    其它 pipeline（补 IF 结构、按 stage 切分、尺寸归一、去重）保持不变。
+    """
+
     # 0) 基于 ir2ast_stmt 构造 parent_map（只做一次）
     parent_map = build_parent_map_from_ir2ast(ir2ast_stmt)
 
-    # 1) 做切片、聚类 ...
+    # 1) 先对每个准则做一次 PDG 切片
     all_slices: List[Tuple[SlicingCriterion, Set[int]]] = []
     for crit in criteria:
         nodes = compute_slice_nodes(prog_pdg, crit.node_id)
+        if not nodes:
+            continue
         all_slices.append((crit, nodes))
 
-    clusters = cluster_slices(all_slices, overlap_threshold=overlap_threshold)
+    if not all_slices:
+        return []
 
+    # 1.1 按 kind 分组切片，避免过度混合
+    grouped: Dict[str, List[Tuple[SlicingCriterion, Set[int]]]] = defaultdict(list)
+    for crit, nodes in all_slices:
+        kind = crit.kind or "unknown"
+        grouped[kind].append((crit, nodes))
+
+    # 1.2 对每一类 kind 分别调用 cluster_slices，再合并结果
+    clusters: List[Dict[str, Any]] = []
+    for kind, slices in grouped.items():
+        # 你现有的 cluster_slices 接口：cluster_slices(all_slices, overlap_threshold)
+        kind_clusters = cluster_slices(slices, overlap_threshold=overlap_threshold)
+        # 可以在 cluster 里标记一下 kind，便于 debug
+        for c in kind_clusters:
+            c.setdefault("kind", kind)
+        clusters.extend(kind_clusters)
+
+    # 2) 根据每个 cluster 构建 FunctionalBlock（先不按 stage 切割）
     blocks: List[FunctionalBlock] = []
     for cluster in clusters:
-        node_ids = cluster["nodes"]
-        crits = cluster["criteria"]
+        node_ids: Set[int] = cluster["nodes"]
+        crits: List[SlicingCriterion] = cluster["criteria"]
 
         stmts = nodes_to_sorted_ast_stmts(node_ids, ir2ast_stmt, parent_map)
+
+        # (2.1) 基本行号
         base_lines = stmts_to_line_numbers(stmts, code_lines)
-        # 2) 再做结构补全（补 ELSIF/ELSE，必要时补 END_IF）
+
+        # (2.2) 补 IF 结构（补 ELSIF/ELSE/END_IF）
         fixed_lines = patch_if_structure(base_lines, code_lines, ensure_end_if=True)
 
-        # 3) 最终用于抽取代码的行号
         line_numbers = sorted(fixed_lines)
 
         block = FunctionalBlock()
@@ -884,16 +1034,17 @@ def extract_functional_blocks(
         block.line_numbers = line_numbers
         blocks.append(block)
 
-
+    # 3) 按 stage/state/step/phase/mode 划分子块
     blocks = split_blocks_by_stage(
         blocks,
         ir2ast_stmt=ir2ast_stmt,
         code_lines=code_lines,
         parent_map=parent_map,
         min_lines=min_lines_stage,
-        stage_var_names=("stage", "Stage"),
+        stage_var_names=("stage", "Stage", "state", "State", "step", "Step", "phase", "Phase", "mode", "Mode"),
     )
 
+    # 4) 尺寸归一：控制块的长度范围在 [min_lines, max_lines]
     blocks = normalize_block_sizes(
         blocks,
         ir2ast_stmt=ir2ast_stmt,
@@ -903,7 +1054,14 @@ def extract_functional_blocks(
         parent_map=parent_map,
     )
 
+    # 5) 过滤无意义块
     blocks = [b for b in blocks if is_meaningful_block(b, code_lines)]
+
+    # 6) 删除块内空 IF（只改 block.line_numbers，不改 code_lines）
+    blocks = remove_empty_ifs_in_blocks(blocks, code_lines)
+
+    # 7) 对完全重复的块按源码去重
+    blocks = dedup_blocks_by_code(blocks, code_lines)
 
     return blocks
 

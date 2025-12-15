@@ -1,0 +1,1101 @@
+
+===== BLOCK 0 =====
+
+PROGRAM MC_MoveAbsolute_Init_Acc_BLOCK_0
+VAR_INPUT
+    Axis_num : USINT;
+END_VAR
+VAR_OUTPUT
+    Active : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Done : BOOL;
+END_VAR
+VAR
+    Axis_run_number : USINT;
+    pos : REAL;
+    run_numberF : USINT;
+    s_all : REAL;
+    stage : USINT;
+    start_postion : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 3(* FBS_CalcRoute *) THEN
+    Axis_run_number := MC_RdAxisPar_UB(AxisNum := Axis_num,AddrOffset := 64);
+    Axis_run_number := Axis_run_number MOD 255 + 1; // [1,255]
+    run_numberF := Axis_run_number;
+    start_postion := MC_RdAxisPar_FL(AxisNum := Axis_num,AddrOffset := 176);
+    IF pos &gt;= start_postion THEN
+        s_all := pos - start_postion;
+    ELSE
+        s_all := start_postion - pos;
+    END_IF;
+    IF s_all &lt;= 0.001(* MINP *) THEN
+        Done := TRUE;
+        CommandAborted := FALSE;
+        Busy := FALSE;
+        Active := FALSE;
+        stage := 0(* FBS_WaitExec *);
+    ELSE
+        stage := 4(* FBS_Moving *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 1 =====
+
+PROGRAM MC_MoveAbsolute_Init_Acc_BLOCK_1
+VAR_INPUT
+    Axis_num : USINT;
+END_VAR
+VAR_OUTPUT
+    Active : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Done : BOOL;
+END_VAR
+VAR
+    Axis_run_number : USINT;
+    direction : INT;
+    jerk : REAL;
+    jerk_mode : BOOL;
+    now_direction : INT;
+    pos : REAL;
+    run_numberF : USINT;
+    s_all : REAL;
+    stage : USINT;
+    start_postion : REAL;
+    vs : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 3(* FBS_CalcRoute *) THEN
+    Axis_run_number := MC_RdAxisPar_UB(AxisNum := Axis_num,AddrOffset := 64);
+    Axis_run_number := Axis_run_number MOD 255 + 1; // [1,255]
+    run_numberF := Axis_run_number;
+    start_postion := MC_RdAxisPar_FL(AxisNum := Axis_num,AddrOffset := 176);
+    IF pos &gt;= start_postion THEN
+        direction := 1;
+        s_all := pos - start_postion;
+    ELSE
+        direction := -1;
+        s_all := start_postion - pos;
+    END_IF;
+    vs := MC_RdAxisPar_FL(AxisNum := Axis_num,AddrOffset := 104);
+    IF vs &lt;= -0.004(* MINV *) THEN
+        vs := -1.0 * vs;
+        now_direction := -1;
+    ELSIF vs &gt;= 0.004(* MINV *) THEN
+        now_direction := 1;
+    ELSE
+        vs := 0;
+        now_direction := direction;
+    END_IF;
+    IF jerk &gt; 0 THEN
+        jerk_mode := TRUE;
+    ELSE
+        jerk_mode := FALSE;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 2 =====
+
+PROGRAM MC_MoveAbsolute_Init_Acc_BLOCK_2
+VAR_INPUT
+    Axis_num : USINT;
+END_VAR
+VAR_OUTPUT
+    Active : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Done : BOOL;
+END_VAR
+VAR
+    acc : REAL;
+    dec : REAL;
+    direction : INT;
+    jerk : REAL;
+    jerk_mode : BOOL;
+    now_direction : INT;
+    rs1 : REAL;
+    run_mode : USINT;
+    s1 : REAL;
+    s2 : REAL;
+    s3 : REAL;
+    s4 : REAL;
+    s_acc : REAL;
+    s_all : REAL;
+    s_dec : REAL;
+    s_rev : REAL;
+    stage : USINT;
+    t1 : REAL;
+    t2 : REAL;
+    t3 : REAL;
+    t4 : REAL;
+    t5 : REAL;
+    t6 : REAL;
+    t7 : REAL;
+    t_all : REAL;
+    t_now : UDINT;
+    vel : REAL;
+    vmax : REAL;
+    vs : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 3(* FBS_CalcRoute *) THEN
+    IF s_all &lt;= 0.001(* MINP *) THEN
+        stage := 0(* FBS_WaitExec *);
+    ELSE
+        IF NOT jerk_mode THEN    // 梯形模式
+            IF direction &lt;&gt; now_direction THEN    // 目标方向与当前速度方向不同,先减速至0
+                rs1 := vs * vs / dec / 2;
+                s_all := s_all + rs1;
+                vs := 0;
+            END_IF;
+            IF vs &lt; vel - 0.004(* MINV *) THEN    // 运动初速度 &lt; 运动目标速度
+                run_mode := 1(* RM_ACC_EQU_DEC *);
+                vmax := vel;
+                t1 := (vmax - vs) / acc;
+                t3 := vmax / dec;
+                s1 := Motion_Delta_S(vs := vs,acc := acc,dec := 0,jerk := 0,d_t := t1);
+                s3 := Motion_Delta_S(vs := vmax,acc := 0,dec := dec,jerk := 0,d_t := t3);
+                s2 := s_all - s1 - s3;
+                t2 := s2 / vmax;
+                IF t2 &lt; 0 THEN
+                    t3 := vs / dec;
+                    s3 := Motion_Delta_S(vs := vs,acc := 0,dec := dec,jerk := 0,d_t := t3);
+                    IF s_all &lt;= s3 THEN    // 直接减速都超距离
+                        t1 := 0; t2 := 0;
+                        s_all := s3;
+                    ELSE
+                        vmax := ESQR(vs * vs - (acc * vs * vs - 2 * acc * dec * s_all) / (acc + dec));
+                        t1 := (vmax - vs) / acc;
+                        t2 := 0;
+                        t3 := vmax / dec;
+                    END_IF;
+                END_IF;
+                t_all := t1 + t2 + t3;
+            END_IF;
+            IF vs &gt;= vel - 0.004(* MINV *) THEN   // 运动初速度 &gt;= 运动目标速度
+                run_mode := 2(* RM_DEC_EQU_DEC *);
+                vmax := vel;
+                t1 := (vs - vmax) / dec;
+                t3 := vmax / dec;
+                s1 := Motion_Delta_S(vs := vs,acc := 0,dec := dec,jerk := 0,d_t := t1);
+                s3 := Motion_Delta_S(vs := vmax,acc := 0,dec := dec,jerk := 0,d_t := t3);
+                s2 := s_all - s1 - s3;
+                t2 := s2 / vmax;
+                IF t2 &lt; 0 THEN
+                    t2 := 0; s2 := 0;
+                END_IF;
+                t_all := t1 + t2 + t3;
+            END_IF;
+        ELSE                     // S 型模式
+            IF direction &lt;&gt; now_direction THEN    // 目标方向与当前速度方向不同,先减速至0
+                s_all := s_all + s_rev;
+                vs := 0;
+            END_IF;
+            IF vs &lt; vel THEN    // 初速度 &lt; 目标速度
+                run_mode := 1(* RM_ACC_EQU_DEC *);
+                vmax := vel;
+                s4 := s_all - s_acc - s_dec;
+                t4 := s4 / vmax;
+                t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                IF t4 &lt; 0 THEN    // 达不到最大速度
+                    IF s_dec &gt;= s_all THEN    // 直接减速都超出预定距离
+                        s_all := s_dec;
+                        t1 := 0; s1 := 0;
+                        t2 := 0; s2 := 0;
+                        t3 := 0; s3 := 0;
+                        t4 := 0; s4 := 0;
+                        s_acc := 0;
+                        t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                    END_IF;
+                END_IF;
+            END_IF;
+            IF vs &gt;= vel THEN       // 初速度 &gt;= 目标速度
+                run_mode := 2(*RM_DEC_EQU_DEC*);
+                vmax := vel;
+                s4 := s_all - s_acc - s_dec;
+                t4 := s4 / vmax;
+                t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                IF t4 &lt; 0 THEN
+                    IF s_dec &gt;= s_all THEN
+                        t1 := 0; s1 := 0;
+                        t2 := 0; s2 := 0;
+                        t3 := 0; s3 := 0;
+                        t4 := 0; s4 := 0;
+                        t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                    END_IF;
+                END_IF;
+            END_IF;
+        END_IF;
+        t_now := 1;
+        stage := 4(* FBS_Moving *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 3 =====
+
+PROGRAM MC_MoveAbsolute_Init_Acc_BLOCK_3
+VAR_INPUT
+    Axis_num : USINT;
+END_VAR
+VAR_OUTPUT
+    Active : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Done : BOOL;
+END_VAR
+VAR
+    acc : REAL;
+    dec : REAL;
+    direction : INT;
+    jerk : REAL;
+    jerk_mode : BOOL;
+    now_direction : INT;
+    rs1 : REAL;
+    rt1 : REAL;
+    run_mode : USINT;
+    rvs : REAL;
+    s1 : REAL;
+    s2 : REAL;
+    s3 : REAL;
+    s4 : REAL;
+    s_acc : REAL;
+    s_all : REAL;
+    s_dec : REAL;
+    s_rev : REAL;
+    stage : USINT;
+    t1 : REAL;
+    t2 : REAL;
+    t3 : REAL;
+    t4 : REAL;
+    t5 : REAL;
+    t6 : REAL;
+    t7 : REAL;
+    t_all : REAL;
+    t_now : UDINT;
+    vel : REAL;
+    vmax : REAL;
+    vs : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 3(* FBS_CalcRoute *) THEN
+    IF s_all &lt;= 0.001(* MINP *) THEN
+        stage := 0(* FBS_WaitExec *);
+    ELSE
+        IF NOT jerk_mode THEN    // 梯形模式
+            IF direction &lt;&gt; now_direction THEN    // 目标方向与当前速度方向不同,先减速至0
+                rt1 := vs / dec;
+                rs1 := vs * vs / dec / 2;
+                s_all := s_all + rs1;
+                rvs := vs;
+                vs := 0;
+            END_IF;
+            IF vs &lt; vel - 0.004(* MINV *) THEN    // 运动初速度 &lt; 运动目标速度
+                run_mode := 1(* RM_ACC_EQU_DEC *);
+                vmax := vel;
+                t1 := (vmax - vs) / acc;
+                t3 := vmax / dec;
+                s1 := Motion_Delta_S(vs := vs,acc := acc,dec := 0,jerk := 0,d_t := t1);
+                s3 := Motion_Delta_S(vs := vmax,acc := 0,dec := dec,jerk := 0,d_t := t3);
+                s2 := s_all - s1 - s3;
+                t2 := s2 / vmax;
+                IF t2 &lt; 0 THEN
+                    t3 := vs / dec;
+                    s3 := Motion_Delta_S(vs := vs,acc := 0,dec := dec,jerk := 0,d_t := t3);
+                    IF s_all &lt;= s3 THEN    // 直接减速都超距离
+                        vmax := vs;
+                        t1 := 0; t2 := 0;
+                        s_all := s3;
+                    ELSE
+                        vmax := ESQR(vs * vs - (acc * vs * vs - 2 * acc * dec * s_all) / (acc + dec));
+                        t1 := (vmax - vs) / acc;
+                        t2 := 0;
+                        t3 := vmax / dec;
+                    END_IF;
+                END_IF;
+                t_all := t1 + t2 + t3;
+            END_IF;
+            IF vs &gt;= vel - 0.004(* MINV *) THEN   // 运动初速度 &gt;= 运动目标速度
+                run_mode := 2(* RM_DEC_EQU_DEC *);
+                vmax := vel;
+                t1 := (vs - vmax) / dec;
+                t3 := vmax / dec;
+                s1 := Motion_Delta_S(vs := vs,acc := 0,dec := dec,jerk := 0,d_t := t1);
+                s3 := Motion_Delta_S(vs := vmax,acc := 0,dec := dec,jerk := 0,d_t := t3);
+                s2 := s_all - s1 - s3;
+                t2 := s2 / vmax;
+                IF t2 &lt; 0 THEN
+                    t2 := 0; s2 := 0;
+                END_IF;
+                t_all := t1 + t2 + t3;
+            END_IF;
+        ELSE                     // S 型模式
+            IF direction &lt;&gt; now_direction THEN    // 目标方向与当前速度方向不同,先减速至0
+                s_all := s_all + s_rev;
+                rvs := vs;
+                vs := 0;
+            END_IF;
+            IF vs &lt; vel THEN    // 初速度 &lt; 目标速度
+                run_mode := 1(* RM_ACC_EQU_DEC *);
+                vmax := vel;
+                s4 := s_all - s_acc - s_dec;
+                t4 := s4 / vmax;
+                t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                IF t4 &lt; 0 THEN    // 达不到最大速度
+                    IF s_dec &gt;= s_all THEN    // 直接减速都超出预定距离
+                        s_all := s_dec;
+                        t1 := 0; s1 := 0;
+                        t2 := 0; s2 := 0;
+                        t3 := 0; s3 := 0;
+                        t4 := 0; s4 := 0;
+                        s_acc := 0;
+                        vmax := vs;
+                        t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                    END_IF;
+                END_IF;
+            END_IF;
+            IF vs &gt;= vel THEN       // 初速度 &gt;= 目标速度
+                run_mode := 2(*RM_DEC_EQU_DEC*);
+                vmax := vel;
+                s4 := s_all - s_acc - s_dec;
+                t4 := s4 / vmax;
+                t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                IF t4 &lt; 0 THEN
+                    IF s_dec &gt;= s_all THEN
+                        t1 := 0; s1 := 0;
+                        t2 := 0; s2 := 0;
+                        t3 := 0; s3 := 0;
+                        t4 := 0; s4 := 0;
+                        vmax := vs;
+                        t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                    END_IF;
+                END_IF;
+            END_IF;
+        END_IF;
+        t_now := 1;
+        stage := 4(* FBS_Moving *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 4 =====
+
+PROGRAM MC_MoveAbsolute_Init_Acc_BLOCK_4
+VAR_INPUT
+    Axis_num : USINT;
+END_VAR
+VAR_OUTPUT
+    Active : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Done : BOOL;
+END_VAR
+VAR
+    acc : REAL;
+    dec : REAL;
+    direction : INT;
+    jerk : REAL;
+    jerk_mode : BOOL;
+    now_direction : INT;
+    rs1 : REAL;
+    rt1 : REAL;
+    run_mode : USINT;
+    rvs : REAL;
+    s1 : REAL;
+    s2 : REAL;
+    s3 : REAL;
+    s4 : REAL;
+    s_acc : REAL;
+    s_all : REAL;
+    s_dec : REAL;
+    s_rev : REAL;
+    stage : USINT;
+    t1 : REAL;
+    t2 : REAL;
+    t3 : REAL;
+    t4 : REAL;
+    t5 : REAL;
+    t6 : REAL;
+    t7 : REAL;
+    t_all : REAL;
+    t_now : UDINT;
+    vel : REAL;
+    vmax : REAL;
+    vs : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 3(* FBS_CalcRoute *) THEN
+    IF s_all &lt;= 0.001(* MINP *) THEN
+        stage := 0(* FBS_WaitExec *);
+    ELSE
+        IF NOT jerk_mode THEN    // 梯形模式
+            IF direction &lt;&gt; now_direction THEN    // 目标方向与当前速度方向不同,先减速至0
+                rt1 := vs / dec;
+                rs1 := vs * vs / dec / 2;
+                s_all := s_all + rs1;
+                rvs := vs;
+                vs := 0;
+            END_IF;
+            IF vs &lt; vel - 0.004(* MINV *) THEN    // 运动初速度 &lt; 运动目标速度
+                run_mode := 1(* RM_ACC_EQU_DEC *);
+                vmax := vel;
+                t1 := (vmax - vs) / acc;
+                t3 := vmax / dec;
+                s1 := Motion_Delta_S(vs := vs,acc := acc,dec := 0,jerk := 0,d_t := t1);
+                s3 := Motion_Delta_S(vs := vmax,acc := 0,dec := dec,jerk := 0,d_t := t3);
+                s2 := s_all - s1 - s3;
+                t2 := s2 / vmax;
+                IF t2 &lt; 0 THEN
+                    t3 := vs / dec;
+                    s3 := Motion_Delta_S(vs := vs,acc := 0,dec := dec,jerk := 0,d_t := t3);
+                    IF s_all &lt;= s3 THEN    // 直接减速都超距离
+                        vmax := vs;
+                        t1 := 0; t2 := 0;
+                        s1 := 0; s2 := 0;
+                        s_all := s3;
+                    ELSE
+                        vmax := ESQR(vs * vs - (acc * vs * vs - 2 * acc * dec * s_all) / (acc + dec));
+                        t1 := (vmax - vs) / acc;
+                        t2 := 0;
+                        t3 := vmax / dec;
+                        s1 := vs * t1 + acc * t1 * t1 / 2;
+                        s2 := 0;
+                        s3 := s_all - s1;
+                    END_IF;
+                END_IF;
+                t_all := t1 + t2 + t3;
+            END_IF;
+            IF vs &gt;= vel - 0.004(* MINV *) THEN   // 运动初速度 &gt;= 运动目标速度
+                run_mode := 2(* RM_DEC_EQU_DEC *);
+                vmax := vel;
+                t1 := (vs - vmax) / dec;
+                t3 := vmax / dec;
+                s1 := Motion_Delta_S(vs := vs,acc := 0,dec := dec,jerk := 0,d_t := t1);
+                s3 := Motion_Delta_S(vs := vmax,acc := 0,dec := dec,jerk := 0,d_t := t3);
+                s2 := s_all - s1 - s3;
+                t2 := s2 / vmax;
+                IF t2 &lt; 0 THEN
+                    t2 := 0; s2 := 0;
+                    s_all := s1 + s3;
+                END_IF;
+                t_all := t1 + t2 + t3;
+            END_IF;
+        ELSE                     // S 型模式
+            IF direction &lt;&gt; now_direction THEN    // 目标方向与当前速度方向不同,先减速至0
+                s_all := s_all + s_rev;
+                rvs := vs;
+                vs := 0;
+            END_IF;
+            IF vs &lt; vel THEN    // 初速度 &lt; 目标速度
+                run_mode := 1(* RM_ACC_EQU_DEC *);
+                vmax := vel;
+                s4 := s_all - s_acc - s_dec;
+                t4 := s4 / vmax;
+                t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                IF t4 &lt; 0 THEN    // 达不到最大速度
+                    IF s_dec &gt;= s_all THEN    // 直接减速都超出预定距离
+                        s_all := s_dec;
+                        t1 := 0; s1 := 0;
+                        t2 := 0; s2 := 0;
+                        t3 := 0; s3 := 0;
+                        t4 := 0; s4 := 0;
+                        s_acc := 0;
+                        vmax := vs;
+                        t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                    END_IF;
+                END_IF;
+            END_IF;
+            IF vs &gt;= vel THEN       // 初速度 &gt;= 目标速度
+                run_mode := 2(*RM_DEC_EQU_DEC*);
+                vmax := vel;
+                s4 := s_all - s_acc - s_dec;
+                t4 := s4 / vmax;
+                t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                IF t4 &lt; 0 THEN
+                    IF s_dec &gt;= s_all THEN
+                        s_all := s_dec;
+                        t1 := 0; s1 := 0;
+                        t2 := 0; s2 := 0;
+                        t3 := 0; s3 := 0;
+                        t4 := 0; s4 := 0;
+                        vmax := vs;
+                        t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                    END_IF;
+                END_IF;
+            END_IF;
+        END_IF;
+        t_now := 1;
+        stage := 4(* FBS_Moving *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 5 =====
+
+PROGRAM MC_MoveAbsolute_Init_Acc_BLOCK_5
+VAR_INPUT
+    Axis_num : USINT;
+END_VAR
+VAR_OUTPUT
+    Active : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Done : BOOL;
+END_VAR
+VAR
+    Axis_run_number : USINT;
+    direction : INT;
+    jerk : REAL;
+    jerk_mode : BOOL;
+    now_direction : INT;
+    pos : REAL;
+    run_numberF : USINT;
+    s_all : REAL;
+    stage : USINT;
+    start_postion : REAL;
+    vs : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 3(* FBS_CalcRoute *) THEN
+    Axis_run_number := MC_RdAxisPar_UB(AxisNum := Axis_num,AddrOffset := 64);
+    Axis_run_number := Axis_run_number MOD 255 + 1; // [1,255]
+    run_numberF := Axis_run_number;
+    start_postion := MC_RdAxisPar_FL(AxisNum := Axis_num,AddrOffset := 176);
+    IF pos &gt;= start_postion THEN
+        direction := 1;
+        s_all := pos - start_postion;
+    ELSE
+        direction := -1;
+        s_all := start_postion - pos;
+    END_IF;
+    vs := MC_RdAxisPar_FL(AxisNum := Axis_num,AddrOffset := 104);
+    IF vs &lt;= -0.004(* MINV *) THEN
+        vs := -1.0 * vs;
+        now_direction := -1;
+    ELSIF vs &gt;= 0.004(* MINV *) THEN
+        now_direction := 1;
+    ELSE
+        vs := 0;
+        now_direction := direction;
+    END_IF;
+    as := MC_RdAxisPar_FL(AxisNum := Axis_num,AddrOffset := 168);
+    IF jerk &gt; 0 THEN
+        jerk_mode := TRUE;
+    ELSE
+        jerk_mode := FALSE;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 6 =====
+
+PROGRAM MC_MoveAbsolute_Init_Acc_BLOCK_6
+VAR_INPUT
+    Axis_num : USINT;
+END_VAR
+VAR_OUTPUT
+    Active : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Done : BOOL;
+END_VAR
+VAR
+    acc : REAL;
+    dec : REAL;
+    direction : INT;
+    jerk : REAL;
+    jerk_mode : BOOL;
+    now_direction : INT;
+    rs1 : REAL;
+    rt1 : REAL;
+    run_mode : USINT;
+    rvs : REAL;
+    s1 : REAL;
+    s2 : REAL;
+    s3 : REAL;
+    s4 : REAL;
+    s_acc : REAL;
+    s_all : REAL;
+    s_dec : REAL;
+    s_rev : REAL;
+    stage : USINT;
+    t1 : REAL;
+    t2 : REAL;
+    t3 : REAL;
+    t4 : REAL;
+    t5 : REAL;
+    t6 : REAL;
+    t7 : REAL;
+    t_all : REAL;
+    t_now : UDINT;
+    vel : REAL;
+    vmax : REAL;
+    vs : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 3(* FBS_CalcRoute *) THEN
+    IF s_all &lt;= 0.001(* MINP *) THEN
+        stage := 0(* FBS_WaitExec *);
+    ELSE
+        IF NOT jerk_mode THEN    // 梯形模式
+            IF direction &lt;&gt; now_direction THEN    // 目标方向与当前速度方向不同,先减速至0
+                rt1 := vs / dec;
+                rs1 := vs * vs / dec / 2;
+                s_all := s_all + rs1;
+                rvs := vs;
+                vs := 0;
+            END_IF;
+            IF vs &lt; vel - 0.004(* MINV *) THEN    // 运动初速度 &lt; 运动目标速度
+                run_mode := 1(* RM_ACC_EQU_DEC *);
+                vmax := vel;
+                t1 := (vmax - vs) / acc;
+                t3 := vmax / dec;
+                s1 := Motion_Delta_S(vs := vs,acc := acc,dec := 0,jerk := 0,d_t := t1);
+                s3 := Motion_Delta_S(vs := vmax,acc := 0,dec := dec,jerk := 0,d_t := t3);
+                s2 := s_all - s1 - s3;
+                t2 := s2 / vmax;
+                IF t2 &lt; 0 THEN
+                    t3 := vs / dec;
+                    s3 := Motion_Delta_S(vs := vs,acc := 0,dec := dec,jerk := 0,d_t := t3);
+                    IF s_all &lt;= s3 THEN    // 直接减速都超距离
+                        vmax := vs;
+                        t1 := 0; t2 := 0;
+                        s1 := 0; s2 := 0;
+                        s_all := s3;
+                    ELSE
+                        vmax := ESQR(vs * vs - (acc * vs * vs - 2 * acc * dec * s_all) / (acc + dec));
+                        t1 := (vmax - vs) / acc;
+                        t2 := 0;
+                        t3 := vmax / dec;
+                        s1 := vs * t1 + acc * t1 * t1 / 2;
+                        s2 := 0;
+                        s3 := s_all - s1;
+                    END_IF;
+                END_IF;
+                t_all := t1 + t2 + t3;
+            END_IF;
+            IF vs &gt;= vel - 0.004(* MINV *) THEN   // 运动初速度 &gt;= 运动目标速度
+                run_mode := 2(* RM_DEC_EQU_DEC *);
+                vmax := vel;
+                t1 := (vs - vmax) / dec;
+                t3 := vmax / dec;
+                s1 := Motion_Delta_S(vs := vs,acc := 0,dec := dec,jerk := 0,d_t := t1);
+                s3 := Motion_Delta_S(vs := vmax,acc := 0,dec := dec,jerk := 0,d_t := t3);
+                s2 := s_all - s1 - s3;
+                t2 := s2 / vmax;
+                IF t2 &lt; 0 THEN
+                    t2 := 0; s2 := 0;
+                    s_all := s1 + s3;
+                END_IF;
+                t_all := t1 + t2 + t3;
+            END_IF;
+        ELSE                     // S 型模式
+            Axis_now_acceleration := MC_RdAxisPar_FL(AxisNum := Axis_num,AddrOffset := 168);
+            as := Axis_now_acceleration;
+            IF direction &lt;&gt; now_direction THEN    // 目标方向与当前速度方向不同,先减速至0
+                s_all := s_all + s_rev;
+                rvs := vs;
+                vs := 0;
+                as := 0;
+            END_IF;
+            IF vs &lt; vel THEN    // 初速度 &lt; 目标速度
+                run_mode := 1(* RM_ACC_EQU_DEC *);
+                vmax := vel;
+                s4 := s_all - s_acc - s_dec;
+                t4 := s4 / vmax;
+                t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                IF t4 &lt; 0 THEN    // 达不到最大速度
+                    IF s_dec &gt;= s_all THEN    // 直接减速都超出预定距离
+                        s_all := s_dec;
+                        t1 := 0; s1 := 0;
+                        t2 := 0; s2 := 0;
+                        t3 := 0; s3 := 0;
+                        t4 := 0; s4 := 0;
+                        s_acc := 0;
+                        vmax := vs;
+                        t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                    END_IF;
+                END_IF;
+            END_IF;
+            IF vs &gt;= vel THEN       // 初速度 &gt;= 目标速度
+                run_mode := 2(*RM_DEC_EQU_DEC*);
+                vmax := vel;
+                s4 := s_all - s_acc - s_dec;
+                t4 := s4 / vmax;
+                t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                IF t4 &lt; 0 THEN
+                    IF s_dec &gt;= s_all THEN
+                        s_all := s_dec;
+                        t1 := 0; s1 := 0;
+                        t2 := 0; s2 := 0;
+                        t3 := 0; s3 := 0;
+                        t4 := 0; s4 := 0;
+                        vmax := vs;
+                        t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                    END_IF;
+                END_IF;
+            END_IF;
+            as := RealAbs(as);
+        END_IF;
+        t_now := 1;
+        stage := 4(* FBS_Moving *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 7 =====
+
+PROGRAM MC_MoveAbsolute_Init_Acc_BLOCK_7
+VAR_INPUT
+    Axis_num : USINT;
+    BufferMode : USINT;
+END_VAR
+VAR
+    Axis_buffer_busy : USINT;
+    Axis_now_motion_vel : REAL;
+    stage : USINT;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 1(* FBS_WaitBuffer *)  THEN
+    IF BufferMode = 0(* BM_Aborting *) THEN
+    ELSE
+        Axis_buffer_busy := MC_RdAxisPar_UB(AxisNum := Axis_num,AddrOffset := 155);
+        IF Axis_buffer_busy = 0 THEN
+            IF BufferMode = 2(* BM_Blendinglow *) THEN
+                Axis_now_motion_vel := MC_RdAxisPar_FL(AxisNum := Axis_num,AddrOffset := 140);
+            END_IF;
+            IF BufferMode = 3(* BFM_BlendingPrevious *) THEN
+                Axis_now_motion_vel := MC_RdAxisPar_FL(AxisNum := Axis_num,AddrOffset := 140);
+            END_IF;
+            IF BufferMode = 4 (*BM_BlendingNext*) THEN
+                Axis_now_motion_vel := MC_RdAxisPar_FL(AxisNum := Axis_num,AddrOffset := 140);
+            END_IF;
+            IF BufferMode = 5(*BM_BlendingHigh*) THEN
+                Axis_now_motion_vel := MC_RdAxisPar_FL(AxisNum := Axis_num,AddrOffset := 140);
+            END_IF;
+        END_IF;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 8 =====
+
+PROGRAM MC_MoveAbsolute_Init_Acc_BLOCK_8
+VAR_INPUT
+    Axis_num : USINT;
+END_VAR
+VAR_OUTPUT
+    Active : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Done : BOOL;
+END_VAR
+VAR
+    direction : INT;
+    jerk : REAL;
+    jerk_mode : BOOL;
+    now_direction : INT;
+    pos : REAL;
+    s1 : REAL;
+    s2 : REAL;
+    s3 : REAL;
+    s4 : REAL;
+    s_acc : REAL;
+    s_all : REAL;
+    s_dec : REAL;
+    s_rev : REAL;
+    stage : USINT;
+    start_postion : REAL;
+    t1 : REAL;
+    t2 : REAL;
+    t3 : REAL;
+    t4 : REAL;
+    t5 : REAL;
+    t6 : REAL;
+    t7 : REAL;
+    t_all : REAL;
+    vel : REAL;
+    vmax : REAL;
+    vs : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 3(* FBS_CalcRoute *) THEN
+    start_postion := MC_RdAxisPar_FL(AxisNum := Axis_num,AddrOffset := 176);
+    IF pos &gt;= start_postion THEN
+        direction := 1;
+        s_all := pos - start_postion;
+    ELSE
+        direction := -1;
+        s_all := start_postion - pos;
+    END_IF;
+    vs := MC_RdAxisPar_FL(AxisNum := Axis_num,AddrOffset := 104);
+    IF vs &lt;= -0.004(* MINV *) THEN
+        vs := -1.0 * vs;
+        now_direction := -1;
+    ELSIF vs &gt;= 0.004(* MINV *) THEN
+        now_direction := 1;
+    ELSE
+        vs := 0;
+        now_direction := direction;
+    END_IF;
+    IF jerk &gt; 0 THEN
+        jerk_mode := TRUE;
+    ELSE
+        jerk_mode := FALSE;
+    END_IF;
+    IF s_all &lt;= 0.001(* MINP *) THEN
+    ELSE
+        IF NOT jerk_mode THEN    // 梯形模式
+        ELSE                     // S 型模式
+            IF direction &lt;&gt; now_direction THEN    // 目标方向与当前速度方向不同,先减速至0
+                s_all := s_all + s_rev;
+                vs := 0;
+            END_IF;
+            IF vs &lt; vel THEN    // 初速度 &lt; 目标速度
+                vmax := vel;
+                s4 := s_all - s_acc - s_dec;
+                t4 := s4 / vmax;
+                t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                IF t4 &lt; 0 THEN    // 达不到最大速度
+                    IF s_dec &gt;= s_all THEN    // 直接减速都超出预定距离
+                        s_all := s_dec;
+                        t1 := 0; s1 := 0;
+                        t2 := 0; s2 := 0;
+                        t3 := 0; s3 := 0;
+                        t4 := 0; s4 := 0;
+                        s_acc := 0;
+                        t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                    END_IF;
+                END_IF;
+            END_IF;
+            IF vs &gt;= vel THEN       // 初速度 &gt;= 目标速度
+                vmax := vel;
+                s4 := s_all - s_acc - s_dec;
+                t4 := s4 / vmax;
+                t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                IF t4 &lt; 0 THEN
+                    IF s_dec &gt;= s_all THEN
+                        t1 := 0; s1 := 0;
+                        t2 := 0; s2 := 0;
+                        t3 := 0; s3 := 0;
+                        t4 := 0; s4 := 0;
+                        s_acc := 0;
+                        t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                    END_IF;
+                END_IF;
+            END_IF;
+        END_IF;
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 9 =====
+
+PROGRAM MC_MoveAbsolute_Init_Acc_BLOCK_9
+VAR_INPUT
+    Axis_num : USINT;
+END_VAR
+VAR_OUTPUT
+    Active : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Done : BOOL;
+END_VAR
+VAR
+    dec : REAL;
+    direction : INT;
+    jerk_mode : BOOL;
+    now_direction : INT;
+    rs1 : REAL;
+    rt1 : REAL;
+    rvs : REAL;
+    s_all : REAL;
+    stage : USINT;
+    t_now : UDINT;
+    vs : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 3(* FBS_CalcRoute *) THEN
+    IF s_all &lt;= 0.001(* MINP *) THEN
+        stage := 0(* FBS_WaitExec *);
+    ELSE
+        IF NOT jerk_mode THEN    // 梯形模式
+            IF direction &lt;&gt; now_direction THEN    // 目标方向与当前速度方向不同,先减速至0
+                rt1 := vs / dec;
+                rs1 := vs * vs / dec / 2;
+                rvs := vs;
+            END_IF;
+        ELSE                     // S 型模式
+            IF direction &lt;&gt; now_direction THEN    // 目标方向与当前速度方向不同,先减速至0
+                rvs := vs;
+            END_IF;
+        END_IF;
+        t_now := 1;
+        stage := 4(* FBS_Moving *);
+    END_IF;
+END_IF;
+END_PROGRAM
+
+===== BLOCK 10 =====
+
+PROGRAM MC_MoveAbsolute_Init_Acc_BLOCK_10
+VAR_INPUT
+    Axis_num : USINT;
+END_VAR
+VAR_OUTPUT
+    Active : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Done : BOOL;
+END_VAR
+VAR
+    acc : REAL;
+    dec : REAL;
+    direction : INT;
+    jerk : REAL;
+    jerk_mode : BOOL;
+    now_direction : INT;
+    rs1 : REAL;
+    rt1 : REAL;
+    run_mode : USINT;
+    s1 : REAL;
+    s2 : REAL;
+    s3 : REAL;
+    s4 : REAL;
+    s_acc : REAL;
+    s_all : REAL;
+    s_dec : REAL;
+    s_rev : REAL;
+    stage : USINT;
+    t1 : REAL;
+    t2 : REAL;
+    t3 : REAL;
+    t4 : REAL;
+    t5 : REAL;
+    t6 : REAL;
+    t7 : REAL;
+    t_all : REAL;
+    t_now : UDINT;
+    vel : REAL;
+    vmax : REAL;
+    vs : REAL;
+END_VAR
+
+(* ===== Functional body from original code ===== *)
+IF stage = 3(* FBS_CalcRoute *) THEN
+    IF s_all &lt;= 0.001(* MINP *) THEN
+        stage := 0(* FBS_WaitExec *);
+    ELSE
+        IF NOT jerk_mode THEN    // 梯形模式
+            IF direction &lt;&gt; now_direction THEN    // 目标方向与当前速度方向不同,先减速至0
+                rt1 := vs / dec;
+                rs1 := vs * vs / dec / 2;
+                s_all := s_all + rs1;
+                vs := 0;
+            END_IF;
+            IF vs &lt; vel - 0.004(* MINV *) THEN    // 运动初速度 &lt; 运动目标速度
+                run_mode := 1(* RM_ACC_EQU_DEC *);
+                vmax := vel;
+                t1 := (vmax - vs) / acc;
+                t3 := vmax / dec;
+                s1 := Motion_Delta_S(vs := vs,acc := acc,dec := 0,jerk := 0,d_t := t1);
+                s3 := Motion_Delta_S(vs := vmax,acc := 0,dec := dec,jerk := 0,d_t := t3);
+                s2 := s_all - s1 - s3;
+                t2 := s2 / vmax;
+                IF t2 &lt; 0 THEN
+                    t3 := vs / dec;
+                    s3 := Motion_Delta_S(vs := vs,acc := 0,dec := dec,jerk := 0,d_t := t3);
+                    IF s_all &lt;= s3 THEN    // 直接减速都超距离
+                        vmax := vs;
+                        t1 := 0; t2 := 0;
+                        s1 := 0; s2 := 0;
+                        s_all := s3;
+                    ELSE
+                        vmax := ESQR(vs * vs - (acc * vs * vs - 2 * acc * dec * s_all) / (acc + dec));
+                        t1 := (vmax - vs) / acc;
+                        t2 := 0;
+                        t3 := vmax / dec;
+                        s1 := vs * t1 + acc * t1 * t1 / 2;
+                        s2 := 0;
+                        s3 := s_all - s1;
+                    END_IF;
+                END_IF;
+                t_all := t1 + t2 + t3;
+            END_IF;
+            IF vs &gt;= vel - 0.004(* MINV *) THEN   // 运动初速度 &gt;= 运动目标速度
+                run_mode := 2(* RM_DEC_EQU_DEC *);
+                vmax := vel;
+                t1 := (vs - vmax) / dec;
+                t3 := vmax / dec;
+                s1 := Motion_Delta_S(vs := vs,acc := 0,dec := dec,jerk := 0,d_t := t1);
+                s3 := Motion_Delta_S(vs := vmax,acc := 0,dec := dec,jerk := 0,d_t := t3);
+                s2 := s_all - s1 - s3;
+                t2 := s2 / vmax;
+                IF t2 &lt; 0 THEN
+                    t2 := 0; s2 := 0;
+                    s_all := s1 + s3;
+                END_IF;
+                t_all := t1 + t2 + t3;
+            END_IF;
+        ELSE                     // S 型模式
+            IF direction &lt;&gt; now_direction THEN    // 目标方向与当前速度方向不同,先减速至0
+                s_all := s_all + s_rev;
+                vs := 0;
+            END_IF;
+            IF vs &lt; vel THEN    // 初速度 &lt; 目标速度
+                run_mode := 1(* RM_ACC_EQU_DEC *);
+                vmax := vel;
+                s4 := s_all - s_acc - s_dec;
+                t4 := s4 / vmax;
+                t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                IF t4 &lt; 0 THEN    // 达不到最大速度
+                    IF s_dec &gt;= s_all THEN    // 直接减速都超出预定距离
+                        s_all := s_dec;
+                        t1 := 0; s1 := 0;
+                        t2 := 0; s2 := 0;
+                        t3 := 0; s3 := 0;
+                        t4 := 0; s4 := 0;
+                        s_acc := 0;
+                        vmax := vs;
+                        t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                    END_IF;
+                END_IF;
+            END_IF;
+            IF vs &gt;= vel THEN       // 初速度 &gt;= 目标速度
+                run_mode := 2(*RM_DEC_EQU_DEC*);
+                vmax := vel;
+                s4 := s_all - s_acc - s_dec;
+                t4 := s4 / vmax;
+                t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                IF t4 &lt; 0 THEN
+                    IF s_dec &gt;= s_all THEN
+                        s_all := s_dec;
+                        t1 := 0; s1 := 0;
+                        t2 := 0; s2 := 0;
+                        t3 := 0; s3 := 0;
+                        t4 := 0; s4 := 0;
+                        vmax := vs;
+                        t_all := t1 + t2 + t3 + t4 + t5 + t6 + t7;
+                    END_IF;
+                END_IF;
+            END_IF;
+        END_IF;
+        t_now := 1;
+        stage := 4(* FBS_Moving *);
+    END_IF;
+END_IF;
+END_PROGRAM
