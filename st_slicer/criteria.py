@@ -26,24 +26,7 @@ from .pdg.pdg_builder import ProgramDependenceGraph
 from .dataflow.def_use import DefUseResult
 from .dataflow.var_access import VarAccess
 from .sema.symbols import POUSymbolTable
-
-
-# ======== 如果工程里已有 SlicingCriterion，请用你自己的定义 ========
-
-@dataclass
-class SlicingCriterion:
-    """
-    切片准则：
-      - node_id: PDG 中的节点编号
-      - kind: 准则类型（如 "io_output" / "state_transition" / "error_logic" / ...）
-      - variable: 便于 debug 的“主变量名”
-      - extra: 其它可选信息（如 base / access / scenario 等）
-    """
-    node_id: int
-    kind: str
-    variable: str
-    extra: Optional[Dict[str, Any]] = None
-    
+from st_slicer.blocks.types import SlicingCriterion
 
 # ======== 配置：控制 / 运动领域的通用启发式 =========
 

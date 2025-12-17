@@ -4,18 +4,7 @@ from dataclasses import dataclass, field
 from typing import Iterable, Set, Literal, Optional, Dict
 
 from .pdg.pdg_builder import ProgramDependenceGraph
-
-
-SliceKind = Literal["io_output", "state_transition", "api_call", "error_logic"]
-
-
-@dataclass(frozen=True)
-class SlicingCriterion:
-    node_id: int                 # PDG 节点编号
-    kind: SliceKind              # 准则类型
-    variable: Optional[str] = None   # 相关变量名（如果有）
-    extra: Dict[str, object] = field(default_factory=dict)
-
+from blocks.types import SlicingCriterion
 
 def backward_slice(
     pdg: ProgramDependenceGraph,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List, Set
+from typing import List, Set, Any, Dict, Optional
 
 from ..criteria import SlicingCriterion
 from ..ast.nodes import Stmt
@@ -16,3 +16,10 @@ class FunctionalBlock:
     node_ids: Set[int] = field(default_factory=set)
     stmts: List[Stmt] = field(default_factory=list)
     line_numbers: List[int] = field(default_factory=list)
+
+@dataclass(frozen=True)
+class SlicingCriterion:
+    node_id: int
+    kind: str
+    variable: Optional[str] = None
+    extra: Dict[str, Any] = field(default_factory=dict)
